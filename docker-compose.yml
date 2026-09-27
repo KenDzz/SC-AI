@@ -1,0 +1,127 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-safety}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-safety}
+      POSTGRES_DB: ${POSTGRES_DB:-safety}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-safety} -d ${POSTGRES_DB:-safety}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-safetyadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-safetyadmin123}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build: ./apps/backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-safety}:${POSTGRES_PASSWORD:-safety}@postgres:5432/${POSTGRES_DB:-safety}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-safetyadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-safetyadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-safety-evidence}
+      MINIO_SECURE: "false"
+      JWT_SECRET: ${JWT_SECRET:-poc-local-demo-jwt-secret-change-me}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-720}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-poc-internal-token}
+      AI_MODE: ${AI_MODE:-DEMO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-admin123}
+      DEMO_SAFETY_PASSWORD: ${DEMO_SAFETY_PASSWORD:-safety123}
+      DEMO_VIEWER_PASSWORD: ${DEMO_VIEWER_PASSWORD:-viewer123}
+      SEED_ON_STARTUP: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  ai-worker:
+    build: ./apps/ai-worker
+    environment:
+      API_BASE_URL: http://backend:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-poc-internal-token}
+      AI_MODE: ${AI_MODE:-DEMO}
+      AI_DEVICE: ${AI_DEVICE:-cpu}
+      MODEL_PATH: /models
+      DEFAULT_AI_FPS: ${DEFAULT_AI_FPS:-5}
+      WORKER_ID: ${WORKER_ID:-worker-01}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-safetyadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-safetyadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-safety-evidence}
+      MINIO_SECURE: "false"
+    volumes:
+      - ./models:/models
+    ports:
+      - "8081:8081"
+    depends_on:
+      backend:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:

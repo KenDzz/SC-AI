@@ -1,0 +1,19 @@
+# Optional GPU override. CPU mode stays the default.
+# Requires the NVIDIA Container Toolkit on a Linux Docker host.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# The published image still runs on CPU. Set AI_DEVICE=cuda and install
+# onnxruntime-gpu in the worker image before expecting CUDA inference.
+
+services:
+  ai-worker:
+    environment:
+      AI_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

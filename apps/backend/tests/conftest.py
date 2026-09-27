@@ -1,0 +1,15 @@
+import os
+
+os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+os.environ["REDIS_URL"] = "redis://127.0.0.1:6399/0"
+os.environ["JWT_SECRET"] = "test-secret"
+os.environ["INTERNAL_API_TOKEN"] = "test-internal"
+os.environ["AI_MODE"] = "DEMO"
+os.environ["TESTING"] = "true"
+os.environ["SEED_ON_STARTUP"] = "true"
+os.environ["DEMO_ADMIN_PASSWORD"] = "admin123"
+os.environ["DEMO_SAFETY_PASSWORD"] = "safety123"
+os.environ["DEMO_VIEWER_PASSWORD"] = "viewer123"
+os.environ["MINIO_ENDPOINT"] = "127.0.0.1:9000"
+os.environ["MINIO_ACCESS_KEY"] = "safetyadmin"
+os.environ["MINIO_SECRET_KEY"] = "safetyadmin123"

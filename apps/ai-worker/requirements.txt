@@ -1,0 +1,12 @@
+numpy==2.1.3
+opencv-python-headless==4.10.0.84
+# supervision pulls opencv-python 5, which drops HOGDescriptor. The image keeps 4.10 headless.
+shapely==2.1.2
+supervision==0.25.0
+onnxruntime==1.20.1
+httpx==0.27.2
+minio==7.2.9
+pydantic==2.10.3
+pydantic-settings==2.6.1
+prometheus-client==0.21.1
+pytest==8.3.4

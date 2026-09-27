@@ -1,0 +1,24 @@
+{
+  "roles": ["ADMIN", "SAFETY_MANAGER", "VIEWER"],
+  "incident_status": ["NEW", "CONFIRMED", "FALSE_POSITIVE", "RESOLVED"],
+  "severity": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+  "zone_types": [
+    "RESTRICTED_AREA",
+    "MACHINE_DANGER_ZONE",
+    "FORKLIFT_LANE",
+    "PRODUCTION_ZONE",
+    "PACKING_ZONE"
+  ],
+  "event_types": [
+    "RESTRICTED_AREA_INTRUSION",
+    "HAIRNET_VIOLATION",
+    "UNIFORM_VIOLATION",
+    "MACHINE_DANGER_ZONE_INTRUSION",
+    "PEDESTRIAN_IN_FORKLIFT_ZONE"
+  ],
+  "condition_types": ["PERSON_INSIDE", "HAIRNET_MISSING", "UNIFORM_INCORRECT"],
+  "ppe": {
+    "hairnet": ["YES", "NO", "UNKNOWN"],
+    "uniform": ["CORRECT", "INCORRECT", "UNKNOWN"]
+  }
+}
