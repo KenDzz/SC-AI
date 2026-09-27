@@ -13,6 +13,10 @@ models/*.onnx
 *.tsbuildinfo
 .tmp_pricing/
 .artifact_xlsx/
-outputs/
-deliverables/
+deliverables/*
+!deliverables/*.docx
+outputs/*
+!outputs/01a0e13a-a65a-71c0-8bc6-047a7ea34736/
+outputs/01a0e13a-a65a-71c0-8bc6-047a7ea34736/*
+!outputs/01a0e13a-a65a-71c0-8bc6-047a7ea34736/*.xlsx
 build_word_report.py
