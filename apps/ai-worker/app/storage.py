@@ -19,6 +19,17 @@ class ObjectStore:
     def put_bytes(self, key: str, data: bytes, content_type: str) -> None:
         self.client.put_object(self.bucket, key, io.BytesIO(data), length=len(data), content_type=content_type)
 
+    def get_bytes(self, key: str) -> bytes | None:
+        try:
+            response = self.client.get_object(self.bucket, key)
+        except Exception:
+            return None
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
     def download(self, key: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.client.fget_object(self.bucket, key, str(path))

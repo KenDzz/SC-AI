@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -53,6 +54,8 @@ class Camera(Base):
     ai_fps: Mapped[int] = mapped_column(Integer, default=25)
     assigned_worker: Mapped[str | None] = mapped_column(String(80), nullable=True)
     simulate_pending: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The camera moves between views (PTZ presets). Zones locked to the best matching frame are the only ones in use.
+    multi_view: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -70,6 +73,8 @@ class Zone(Base):
     name: Mapped[str] = mapped_column(String(200))
     zone_type: Mapped[str] = mapped_column(String(64), index=True)
     polygon: Mapped[list] = mapped_column(JSON)
+    # Object key of the frame the polygon was drawn on. The worker matches live frames against it.
+    reference_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

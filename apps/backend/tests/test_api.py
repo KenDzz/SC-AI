@@ -88,3 +88,84 @@ def test_polygon_must_be_normalized():
         assert "between 0 and 1" in str(exc)
     else:
         raise AssertionError("expected a validation error")
+
+
+def test_polygon_takes_any_number_of_corners_but_no_crossing_edges():
+    l_shape = [[0.1, 0.1], [0.6, 0.1], [0.6, 0.4], [0.3, 0.4], [0.3, 0.9], [0.1, 0.9]]
+    assert validate_polygon(l_shape) == l_shape
+    assert len(validate_polygon(l_shape[:3] + [[0.45, 0.4]] + l_shape[3:])) == 7
+    assert validate_polygon([[0.1, 0.1], [0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.1]]) == [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5]]
+    for points, message in (
+        ([[0.1, 0.1], [0.9, 0.9], [0.9, 0.1], [0.1, 0.9]], "cross"),
+        ([[0.1, 0.1], [0.5, 0.5], [0.9, 0.9]], "no area"),
+        ([[0.2, 0.2], [0.2, 0.2], [0.2, 0.2]], "3 different points"),
+    ):
+        try:
+            validate_polygon(points)
+        except ValueError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError(f"expected a validation error for {points}")
+
+
+def test_admin_redraws_a_zone_in_place_and_its_rules_stay():
+    with client() as api:
+        headers = auth(api, "admin", "admin123")
+        rule = next(item for item in api.get("/api/rules", headers=headers).json() if item["event_type"] == "RESTRICTED_AREA_INTRUSION")
+        shape = [[0.5, 0.4], [0.7, 0.38], [0.8, 0.5], [0.72, 0.62], [0.55, 0.6], [0.48, 0.5]]
+        redrawn = api.patch(f"/api/zones/{rule['zone_id']}", headers=headers, json={"polygon": shape})
+        assert redrawn.status_code == 200, redrawn.text
+        assert redrawn.json()["id"] == rule["zone_id"]
+        assert redrawn.json()["polygon"] == shape
+        assert redrawn.json()["name"] == rule["zone_name"]
+        still = next(item for item in api.get("/api/rules", headers=headers).json() if item["id"] == rule["id"])
+        assert still["zone_id"] == rule["zone_id"]
+        crossing = api.patch(f"/api/zones/{rule['zone_id']}", headers=headers, json={"polygon": [[0.1, 0.1], [0.9, 0.9], [0.9, 0.1], [0.1, 0.9]]})
+        assert crossing.status_code == 400
+        assert "cross" in crossing.json()["detail"]
+        viewer = auth(api, "viewer", "viewer123")
+        assert api.patch(f"/api/zones/{rule['zone_id']}", headers=viewer, json={"polygon": shape}).status_code == 403
+
+
+def test_zone_keeps_the_frame_it_was_drawn_on(monkeypatch):
+    from app.routers import catalog
+
+    objects: dict[str, bytes] = {}
+    monkeypatch.setattr(catalog, "get_bytes", lambda key: objects.get(key))
+    monkeypatch.setattr(catalog, "put_bytes", lambda key, data, content_type: objects.__setitem__(key, data))
+    with client() as api:
+        headers = auth(api, "admin", "admin123")
+        camera = next(item for item in api.get("/api/cameras", headers=headers).json() if item["code"] == "CAM-WAREHOUSE-01")
+        frames = f"/api/cameras/{camera['id']}/reference-frames"
+        assert api.post(frames, headers=headers).status_code == 404
+        objects[f"cameras/{camera['id']}/latest_raw.jpg"] = b"frame drawn on"
+        frozen = api.post(frames, headers=headers).json()["id"]
+        objects[f"cameras/{camera['id']}/latest_raw.jpg"] = b"a later frame"
+        assert api.get(f"{frames}/{frozen}", headers=headers).content == b"frame drawn on"
+
+        shape = [[0.1, 0.6], [0.4, 0.6], [0.4, 0.9], [0.1, 0.9]]
+        zone = api.post("/api/zones", headers=headers, json={"camera_id": camera["id"], "name": "Dock", "zone_type": "RESTRICTED_AREA", "polygon": shape, "reference_id": frozen}).json()
+        key = f"cameras/{camera['id']}/references/{frozen}.jpg"
+        assert zone["reference_key"] == key
+        worker = api.get("/api/internal/cameras", headers={"X-Internal-Token": "test-internal"}).json()
+        assert next(item for cam in worker for item in cam["zones"] if item["id"] == zone["id"])["reference_key"] == key
+
+        url = f"/api/zones/{zone['id']}"
+        assert api.patch(url, headers=headers, json={"name": "Dock A"}).json()["reference_key"] == key
+        assert api.patch(url, headers=headers, json={"polygon": shape}).json()["reference_key"] is None
+        assert api.patch(url, headers=headers, json={"reference_id": frozen}).json()["reference_key"] == key
+        assert api.patch(url, headers=headers, json={"reference_id": "../latest_raw"}).status_code == 400
+        assert api.patch(url, headers=headers, json={"reference_id": "0" * 32}).status_code == 400
+        api.delete(url, headers=headers)
+
+
+def test_multi_view_is_off_by_default_and_reaches_the_worker():
+    with client() as api:
+        headers = auth(api, "admin", "admin123")
+        camera = next(item for item in api.get("/api/cameras", headers=headers).json() if item["code"] == "CAM-WAREHOUSE-01")
+        assert camera["multi_view"] is False
+        updated = api.patch(f"/api/cameras/{camera['id']}", headers=headers, json={"multi_view": True})
+        assert updated.status_code == 200 and updated.json()["multi_view"] is True
+        worker = api.get("/api/internal/cameras", headers={"X-Internal-Token": "test-internal"}).json()
+        assert next(item for item in worker if item["id"] == camera["id"])["multi_view"] is True
+        api.patch(f"/api/cameras/{camera['id']}", headers=headers, json={"multi_view": False})

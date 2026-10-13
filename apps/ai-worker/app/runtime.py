@@ -7,6 +7,7 @@ import time
 from collections import Counter, deque
 from datetime import datetime, timezone
 
+from app.alignment import ViewAligner, ZoneView
 from app.api_client import ApiClient
 from app.config import Settings
 from app.detectors import HogPersonDetector, UnknownPPEClassifier, build_detectors
@@ -17,7 +18,7 @@ from app.rule_engine import Observation, RuleConfig, RuleEngine
 from app.sources import FrameSource
 from app.storage import ObjectStore
 from app.tracker import PersonTracker
-from app.zone_engine import bbox_center_in_polygon
+from app.zone_engine import bbox_foot_in_polygon
 
 log = logging.getLogger("worker.runtime")
 PPE_EVENTS = {"HAIRNET_VIOLATION", "UNIFORM_VIOLATION"}
@@ -56,6 +57,43 @@ def rule_config(rule: dict) -> RuleConfig:
     )
 
 
+HAIRNET_TEXT = {"YES": "Yes", "NO": "No", "UNKNOWN": "Unknown"}
+UNIFORM_TEXT = {"CORRECT": "Correct", "INCORRECT": "Incorrect", "UNKNOWN": "Unknown"}
+
+
+def track_checks(rules: list[dict], zones: list[dict], box: tuple[float, float, float, float], hairnet: str, uniform: str) -> list[dict]:
+    """What each enabled rule says about one person, for the overlay and the live panel.
+
+    Only rules whose zone holds the person's feet apply. State is violation, ok or unknown.
+    """
+    by_id = {zone["id"]: zone for zone in zones}
+    checks: list[dict] = []
+    for rule in rules:
+        if not rule.get("enabled"):
+            continue
+        zone = by_id.get(rule["zone_id"])
+        if zone is None or not bbox_foot_in_polygon(zone.get("polygon"), box):
+            continue
+        condition = rule["condition_type"]
+        if condition == "PERSON_INSIDE":
+            check = {"text": f"In {zone.get('name') or zone.get('zone_type')}", "state": "violation"}
+        elif condition == "HAIRNET_MISSING":
+            check = {"text": f"Hairnet: {HAIRNET_TEXT.get(hairnet, 'Unknown')}", "state": {"NO": "violation", "YES": "ok"}.get(hairnet, "unknown")}
+        elif condition == "UNIFORM_INCORRECT":
+            check = {"text": f"Uniform: {UNIFORM_TEXT.get(uniform, 'Unknown')}", "state": {"INCORRECT": "violation", "CORRECT": "ok"}.get(uniform, "unknown")}
+        else:
+            continue
+        if check not in checks:
+            checks.append(check)
+    return checks
+
+
+def place_zone(zone: dict, view: ZoneView | None) -> dict:
+    """The zone as rules see it on this frame. A paused zone has no polygon, so nobody is inside it."""
+    view = view or ZoneView("UNVERIFIED", zone.get("polygon"))
+    return {**zone, "polygon": view.polygon, "drawn_polygon": zone.get("polygon"), "view_state": view.state, "shift_pct": view.shift_pct}
+
+
 def crop_of(frame, box: list[float]):
     height, width = frame.shape[:2]
     x1 = max(0, min(width - 1, int(box[0])))
@@ -83,11 +121,16 @@ class CameraLoop:
         self.last_preview = 0.0
         self.last_raw_preview = 0.0
         self.ppe_votes: dict[str, deque] = {}
+        self.aligner = ViewAligner(self.store.get_bytes)
+        self.config: dict | None = None
+        self.config_at = float("-inf")
+        self.last_heartbeat_at = float("-inf")
+        self.last_heartbeat_status = ""
         self.detector, self.ppe, self.person_name, self.person_version, self.ppe_name, self.ppe_version = self._load_models()
 
     def _load_models(self):
         try:
-            return build_detectors(self.settings.ai_mode, self.settings.model_path, self.settings.ai_device)
+            return build_detectors(self.settings.ai_mode, self.settings.model_path, self.settings.ai_device, self.settings.ai_threads)
         except Exception:
             log.exception("model adapter failed; person detection uses HOG and PPE stays UNKNOWN")
             return HogPersonDetector(), UnknownPPEClassifier(), "person-detector", "hog-v1", "ppe-classifier", "unloaded"
@@ -126,18 +169,23 @@ class CameraLoop:
                 self.stop.wait(interval - elapsed)
 
     def _camera(self) -> dict | None:
+        """Camera config, zones and rules, fetched about once a second instead of on every frame."""
+        now = time.monotonic()
+        if now - self.config_at < self.settings.config_refresh_s:
+            return self.config
         try:
             cameras = self.api.list_cameras()
         except Exception:
             log.warning("camera config request failed", extra={"camera_id": self.camera_id})
             return None
+        found = None
         for camera in cameras:
             if camera["id"] == self.camera_id:
                 assigned = camera.get("assigned_worker")
-                if assigned and assigned != self.settings.worker_id:
-                    return None
-                return camera
-        return None
+                found = None if assigned and assigned != self.settings.worker_id else camera
+                break
+        self.config, self.config_at = found, now
+        return found
 
     def _step(self, camera: dict) -> None:
         if camera.get("simulate_pending"):
@@ -147,6 +195,7 @@ class CameraLoop:
                 self.api.ack_simulate(camera["id"])
             except Exception:
                 log.warning("simulate ack failed", extra={"camera_id": camera["id"]})
+            camera["simulate_pending"] = False
         frame, source_state = self.source.read(camera, self.store, self.settings)
         if frame is None:
             camera_up.labels(camera_id=camera["id"]).set(0)
@@ -159,6 +208,8 @@ class CameraLoop:
         now = time.time()
         hold = now < self.hold_until
         infer_started = time.perf_counter()
+        views = self.aligner.update(frame, camera.get("zones") or [], now, multi_view=bool(camera.get("multi_view")))
+        camera = {**camera, "zones": [place_zone(zone, views.get(zone["id"])) for zone in camera.get("zones") or []]}
         detections = self.detector.detect(frame, camera.get("zones") or [], now, hold)
         tracks = self.tracker.update(detections)
         enriched = self._enrich(frame, camera, detections, tracks)
@@ -169,11 +220,10 @@ class CameraLoop:
         self.frames += 1
         self.frame_times.append(now)
         self._apply_rules(camera, frame, enriched, now)
-        annotated = annotate(frame, camera.get("zones") or [], enriched)
         camera_up.labels(camera_id=camera["id"]).set(1)
         achieved = self._achieved_fps()
         camera_fps.labels(camera_id=camera["id"]).set(achieved)
-        self._maybe_store_preview(camera["id"], frame, annotated, fps_setting)
+        self._maybe_store_preview(camera["id"], frame, lambda: annotate(frame, camera.get("zones") or [], enriched), fps_setting)
         self._heartbeat(camera, "AI_PROCESSING", enriched, latency * 1000.0, achieved, source_state)
 
     def _enrich(self, frame, camera: dict, detections: list[dict], tracks: list[dict]) -> list[dict]:
@@ -186,9 +236,9 @@ class CameraLoop:
             zone_types = [
                 zone["zone_type"]
                 for zone in zones
-                if bbox_center_in_polygon(zone.get("polygon"), box)
+                if bbox_foot_in_polygon(zone.get("polygon"), box)
             ]
-            hairnet, uniform, ppe_confidence = "UNKNOWN", "UNKNOWN", 0.0
+            hairnet, uniform, ppe_confidence, checks = "UNKNOWN", "UNKNOWN", 0.0, []
             if track["class_name"] == "person":
                 ppe = self.ppe.classify(
                     crop_of(frame, track["bbox_xyxy"]),
@@ -200,7 +250,8 @@ class CameraLoop:
                     ppe["uniform"],
                     float(ppe.get("confidence") or 0.0),
                 )
-            enriched.append({**track, "bbox_norm": box, "hairnet": hairnet, "uniform": uniform, "ppe_confidence": ppe_confidence, "zone_types": zone_types})
+                checks = track_checks(camera.get("rules") or [], zones, box, hairnet, uniform)
+            enriched.append({**track, "bbox_norm": box, "hairnet": hairnet, "uniform": uniform, "ppe_confidence": ppe_confidence, "zone_types": zone_types, "checks": checks})
         stale = set(self.ppe_votes) - {track["track_id"] for track in tracks}
         for track_id in stale:
             self.ppe_votes.pop(track_id, None)
@@ -238,7 +289,7 @@ class CameraLoop:
                 zone = zones.get(rule["zone_id"])
                 if zone is None:
                     continue
-                inside = bbox_center_in_polygon(zone.get("polygon"), track["bbox_norm"])
+                inside = bbox_foot_in_polygon(zone.get("polygon"), track["bbox_norm"])
                 confidence = track["ppe_confidence"] if rule["condition_type"] != "PERSON_INSIDE" else track["confidence"]
                 actions.extend(
                     self.engine.update(
@@ -308,13 +359,14 @@ class CameraLoop:
                 incident_id=body["id"],
             )
 
-    def _maybe_store_preview(self, camera_id: str, raw, annotated, fps: int) -> None:
+    def _maybe_store_preview(self, camera_id: str, raw, render, fps: int) -> None:
+        """Draws the overlay only when a preview is due, at most ten times a second."""
         now = time.time()
         preview_every = 1.0 / min(max(fps, 1), 10)
         try:
             if now - self.last_preview >= preview_every:
                 self.last_preview = now
-                self.store.put_bytes(f"cameras/{camera_id}/latest.jpg", jpeg_bytes(annotated), "image/jpeg")
+                self.store.put_bytes(f"cameras/{camera_id}/latest.jpg", jpeg_bytes(render()), "image/jpeg")
             if now - self.last_raw_preview >= 1.0:
                 self.last_raw_preview = now
                 self.store.put_bytes(f"cameras/{camera_id}/latest_raw.jpg", jpeg_bytes(raw), "image/jpeg")
@@ -322,6 +374,11 @@ class CameraLoop:
             log.warning("preview upload failed", extra={"camera_id": camera_id})
 
     def _heartbeat(self, camera: dict, status: str, tracks: list[dict], inference_ms: float, achieved: float, source_state: str = "") -> None:
+        """The dashboard polls once a second, so a few heartbeats a second are enough. A status change goes out at once."""
+        now = time.monotonic()
+        if status == self.last_heartbeat_status and now - self.last_heartbeat_at < self.settings.heartbeat_every_s:
+            return
+        self.last_heartbeat_at, self.last_heartbeat_status = now, status
         payload = {
             "status": status,
             "frames_processed": self.frames,
@@ -339,8 +396,14 @@ class CameraLoop:
                     "confidence": round(float(track["confidence"]), 3),
                     "hairnet": track.get("hairnet"),
                     "uniform": track.get("uniform"),
+                    "checks": track.get("checks") or [],
                 }
                 for track in tracks
+            ],
+            "zones": [
+                {"id": zone["id"], "name": zone.get("name"), "state": zone["view_state"], "shift_pct": zone.get("shift_pct", 0.0)}
+                for zone in camera.get("zones") or []
+                if "view_state" in zone
             ],
         }
         try:

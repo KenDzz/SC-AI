@@ -31,9 +31,6 @@ export const CONDITION_LABELS: Record<string, string> = {
   UNIFORM_INCORRECT: "Incorrect uniform",
 };
 
-export const PPE_HAIRNET: Record<string, string> = { YES: "Yes", NO: "No", UNKNOWN: "Unknown" };
-export const PPE_UNIFORM: Record<string, string> = { CORRECT: "Correct", INCORRECT: "Incorrect", UNKNOWN: "Unknown" };
-
 export function eventLabel(value: string) {
   return EVENT_LABELS[value] || value;
 }

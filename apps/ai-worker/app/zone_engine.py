@@ -29,6 +29,16 @@ def bbox_center_in_polygon(points: list[list[float]] | None, bbox: tuple[float, 
     return point_in_polygon(points, (float(x1) + float(x2)) / 2.0, (float(y1) + float(y2)) / 2.0)
 
 
+def bbox_foot_in_polygon(points: list[list[float]] | None, bbox: tuple[float, float, float, float]) -> bool:
+    """Zones are drawn on the floor, so a person is inside where their feet are.
+
+    The box centre sits at waist height and, seen from a raised camera, projects onto
+    the floor behind the person.
+    """
+    x1, _, x2, y2 = bbox
+    return point_in_polygon(points, (float(x1) + float(x2)) / 2.0, float(y2))
+
+
 def representative_point(points: list[list[float]] | None) -> tuple[float, float] | None:
     polygon = as_polygon(points)
     if polygon is None:
