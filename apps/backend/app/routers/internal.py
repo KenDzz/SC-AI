@@ -38,7 +38,11 @@ def list_cameras(db: Session = Depends(get_db), _: None = Depends(require_worker
                 "ai_fps": camera.ai_fps,
                 "assigned_worker": camera.assigned_worker,
                 "simulate_pending": camera.simulate_pending,
-                "zones": [{"id": zone.id, "name": zone.name, "zone_type": zone.zone_type, "polygon": zone.polygon} for zone in zones],
+                "multi_view": bool(camera.multi_view),
+                "zones": [
+                    {"id": zone.id, "name": zone.name, "zone_type": zone.zone_type, "polygon": zone.polygon, "reference_key": zone.reference_key}
+                    for zone in zones
+                ],
                 "rules": [
                     {
                         "id": rule.id,

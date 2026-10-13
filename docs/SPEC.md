@@ -480,6 +480,11 @@ Implement:
 
 point in polygon
 bbox center in polygon
+bbox foot point (bottom centre) in polygon
+
+Rules decide whether a person is inside a zone by the foot point.
+Zones are drawn on the floor, and the box centre sits at waist height,
+which a raised camera projects onto the floor behind the person.
 
 and structure the code so future versions can support:
 

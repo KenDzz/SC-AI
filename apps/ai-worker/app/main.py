@@ -3,6 +3,7 @@ import signal
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import cv2
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import get_settings
@@ -59,6 +60,8 @@ def main() -> None:
     settings = get_settings()
     if settings.ai_mode.upper() not in {"DEMO", "REAL"}:
         raise SystemExit("AI_MODE must be DEMO or REAL")
+    # Each camera has its own thread, so OpenCV calls run single-threaded rather than sharing one pool.
+    cv2.setNumThreads(1)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())

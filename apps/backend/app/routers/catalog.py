@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.deps import get_current_user, require
 from app.models import Camera, Factory, Incident, IncidentEvidence, OperatorFeedback, Rule, User, Zone, AIModel
-from app.schemas import CameraIn, CameraOut, CameraUpdate, FactoryOut, ModelOut, RuleIn, RuleOut, RuleUpdate, ZoneIn, ZoneOut
+from app.schemas import CameraIn, CameraOut, CameraUpdate, FactoryOut, ModelOut, RuleIn, RuleOut, RuleUpdate, ZoneIn, ZoneOut, ZoneUpdate
 from app.services import camera_out, read_live, rule_out
 from app.storage import get_bytes, put_bytes
 from app.validators import CONDITION_TYPES, EVENT_TYPES, SEVERITIES, STREAM_TYPES, ZONE_TYPES, validate_polygon
@@ -53,6 +53,7 @@ def create_camera(body: CameraIn, db: Session = Depends(get_db), _: User = Depen
         enabled=body.enabled,
         ai_fps=body.ai_fps,
         assigned_worker=body.assigned_worker or None,
+        multi_view=body.multi_view,
     )
     db.add(camera)
     db.commit()
@@ -158,7 +159,43 @@ def camera_live(camera_id: str, db: Session = Depends(get_db), _: User = Depends
         "dropped_frames": live.get("dropped_frames"),
         "source_state": live.get("source_state"),
         "tracks": live.get("tracks") or [],
+        "zones": live.get("zones") or [],
     }
+
+
+def _reference_key(camera_id: str, reference_id: str) -> str:
+    if len(reference_id) != 32 or any(char not in "0123456789abcdef" for char in reference_id):
+        raise HTTPException(status_code=400, detail="Unknown reference frame")
+    return f"cameras/{camera_id}/references/{reference_id}.jpg"
+
+
+@router.post("/cameras/{camera_id}/reference-frames")
+def freeze_reference_frame(camera_id: str, db: Session = Depends(get_db), _: User = Depends(require("ADMIN"))):
+    """Keep the current raw frame so zones drawn on it can be matched against live video later."""
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    data = get_bytes(f"cameras/{camera.id}/latest_raw.jpg")
+    if data is None:
+        raise HTTPException(status_code=404, detail="No frame yet. The camera worker is still starting.")
+    reference_id = uuid.uuid4().hex
+    put_bytes(_reference_key(camera.id, reference_id), data, "image/jpeg")
+    return {"id": reference_id}
+
+
+@router.get("/cameras/{camera_id}/reference-frames/{reference_id}")
+def reference_frame(camera_id: str, reference_id: str, _: User = Depends(get_current_user)):
+    data = get_bytes(_reference_key(camera_id, reference_id))
+    if data is None:
+        raise HTTPException(status_code=404, detail="Reference frame not found")
+    return Response(content=data, media_type="image/jpeg")
+
+
+def _stored_reference(camera_id: str, reference_id: str) -> str:
+    key = _reference_key(camera_id, reference_id)
+    if get_bytes(key) is None:
+        raise HTTPException(status_code=400, detail="Reference frame not found. Reload the page and draw again")
+    return key
 
 
 @router.post("/cameras/{camera_id}/simulate")
@@ -189,8 +226,35 @@ def create_zone(body: ZoneIn, db: Session = Depends(get_db), _: User = Depends(r
         polygon = validate_polygon(body.polygon)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    zone = Zone(factory_id=camera.factory_id, camera_id=camera.id, name=body.name.strip(), zone_type=body.zone_type, polygon=polygon)
+    reference_key = _stored_reference(camera.id, body.reference_id) if body.reference_id else None
+    zone = Zone(factory_id=camera.factory_id, camera_id=camera.id, name=body.name.strip(), zone_type=body.zone_type, polygon=polygon, reference_key=reference_key)
     db.add(zone)
+    db.commit()
+    db.refresh(zone)
+    return zone
+
+
+@router.patch("/zones/{zone_id}", response_model=ZoneOut)
+def update_zone(zone_id: str, body: ZoneUpdate, db: Session = Depends(get_db), _: User = Depends(require("ADMIN"))):
+    """Rename or redraw a zone in place. Its rules and past incidents keep pointing at it.
+
+    A new shape belongs to the frame it was drawn on, so it replaces the reference frame,
+    or clears it when none is sent. A reference frame alone locks the current shape to that view.
+    """
+    zone = db.get(Zone, zone_id)
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    reference_key = _stored_reference(zone.camera_id, body.reference_id) if body.reference_id else None
+    if body.polygon is not None:
+        try:
+            zone.polygon = validate_polygon(body.polygon)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        zone.reference_key = reference_key
+    elif reference_key:
+        zone.reference_key = reference_key
+    if body.name is not None:
+        zone.name = body.name.strip()
     db.commit()
     db.refresh(zone)
     return zone

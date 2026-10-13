@@ -13,6 +13,7 @@ export type Camera = {
   enabled: boolean;
   ai_fps: number;
   assigned_worker: string | null;
+  multi_view?: boolean;
   status: string;
   created_at: string;
   updated_at: string;
@@ -25,6 +26,7 @@ export type Zone = {
   name: string;
   zone_type: string;
   polygon: number[][];
+  reference_key?: string | null;
 };
 
 export type Rule = {

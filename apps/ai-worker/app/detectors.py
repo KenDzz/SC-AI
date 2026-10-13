@@ -16,10 +16,11 @@ FORKLIFT_CLASS = 1
 
 
 def _box(nx: float, ny: float, width: int, height: int, bw: float, bh: float) -> list[float]:
+    """(nx, ny) is where the object stands on the floor, so it is the bottom centre of the box."""
     x1 = max(0.0, nx - bw / 2) * width
-    y1 = max(0.0, ny - bh / 2) * height
+    y1 = max(0.0, ny - bh) * height
     x2 = min(1.0, nx + bw / 2) * width
-    y2 = min(1.0, ny + bh / 2) * height
+    y2 = min(1.0, ny) * height
     return [x1, y1, x2, y2]
 
 
@@ -82,10 +83,8 @@ class OnnxObjectDetector:
     class_id 0 is person and class_id 1 is forklift.
     """
 
-    def __init__(self, path: str, providers: list[str]):
-        import onnxruntime as ort
-
-        self.session = ort.InferenceSession(str(path), providers=providers)
+    def __init__(self, path: str, providers: list[str], threads: int = 2):
+        self.session = onnx_session(path, providers, threads)
         self.input_name = self.session.get_inputs()[0].name
         shape = self.session.get_inputs()[0].shape
         self.input_h = int(shape[2]) if isinstance(shape[2], int) else 640
@@ -234,10 +233,8 @@ class OnnxPPEClassifier:
     Logits are hairnet YES/NO/UNKNOWN then uniform CORRECT/INCORRECT/UNKNOWN.
     """
 
-    def __init__(self, path: str, providers: list[str]):
-        import onnxruntime as ort
-
-        self.session = ort.InferenceSession(str(path), providers=providers)
+    def __init__(self, path: str, providers: list[str], threads: int = 2):
+        self.session = onnx_session(path, providers, threads)
         self.input_name = self.session.get_inputs()[0].name
 
     def classify(self, crop, context: dict | None = None) -> dict:
@@ -396,6 +393,23 @@ def _softmax(values: np.ndarray) -> np.ndarray:
     return exp / max(exp.sum(), 1e-6)
 
 
+def onnx_session(path: str, providers: list[str], threads: int):
+    """A small thread pool that sleeps between frames.
+
+    By default ONNX Runtime gives every session a thread per core and keeps those
+    threads spinning between runs. With one session per camera that pins most cores
+    even when idle, and cameras slow each other down.
+    """
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = max(1, threads)
+    options.inter_op_num_threads = 1
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    return ort.InferenceSession(str(path), sess_options=options, providers=providers)
+
+
 def providers_for(device: str) -> list[str]:
     if device.lower() in {"cuda", "gpu"}:
         return ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -405,10 +419,8 @@ def providers_for(device: str) -> list[str]:
 class YoloxPersonDetector:
     """YOLOX-Nano, Apache-2.0. Output is decoded from the 416-pixel grid."""
 
-    def __init__(self, path: str, providers: list[str]):
-        import onnxruntime as ort
-
-        self.session = ort.InferenceSession(str(path), providers=providers)
+    def __init__(self, path: str, providers: list[str], threads: int = 2):
+        self.session = onnx_session(path, providers, threads)
         self.input_name = self.session.get_inputs()[0].name
         self.input_size = 416
 
@@ -466,7 +478,7 @@ def _letterbox(frame: np.ndarray, size: int) -> tuple[np.ndarray, float, int, in
     return canvas, scale, 0, 0
 
 
-def build_detectors(mode: str, model_path: str, device: str):
+def build_detectors(mode: str, model_path: str, device: str, threads: int = 2):
     root = Path(model_path)
     providers = providers_for(device)
     person_onnx = root / "person.onnx"
@@ -478,7 +490,7 @@ def build_detectors(mode: str, model_path: str, device: str):
         ppe = DemoPPEClassifier()
         return detector, ppe, "person-detector", "v0-demo", "ppe-classifier", "v0.1-demo"
     if person_onnx.exists():
-        detector = YoloxPersonDetector(str(person_onnx), providers)
+        detector = YoloxPersonDetector(str(person_onnx), providers, threads)
         person_name, person_version = "yolox-nano", "apache-2.0"
     else:
         detector = HogPersonDetector()
@@ -488,13 +500,13 @@ def build_detectors(mode: str, model_path: str, device: str):
         pass
     ppe_name, ppe_version = "ppe-classifier", "unloaded"
     if ppe_onnx.exists():
-        ppe = OnnxPPEClassifier(str(ppe_onnx), providers)
+        ppe = OnnxPPEClassifier(str(ppe_onnx), providers, threads)
         ppe_version = "onnx"
     else:
         ppe = ColorPPEClassifier()
         ppe_version = "color-v1"
     if forklift_onnx.exists():
-        detector = _ForkliftUnion(detector, OnnxObjectDetector(str(forklift_onnx), providers))
+        detector = _ForkliftUnion(detector, OnnxObjectDetector(str(forklift_onnx), providers, threads))
     return detector, ppe, person_name, person_version, ppe_name, ppe_version
 
 

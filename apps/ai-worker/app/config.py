@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     frame_width: int = 960
     frame_height: int = 540
+    # Inference threads per camera. Cameras run in parallel, so a few threads each keeps them from fighting over cores.
+    ai_threads: int = 2
+    config_refresh_s: float = 1.0
+    heartbeat_every_s: float = 0.5
 
 
 @lru_cache

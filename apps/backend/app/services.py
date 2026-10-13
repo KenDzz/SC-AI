@@ -88,6 +88,7 @@ def camera_out(camera, live: dict | None = None) -> CameraOut:
         enabled=camera.enabled,
         ai_fps=camera.ai_fps,
         assigned_worker=camera.assigned_worker,
+        multi_view=bool(camera.multi_view),
         status=display_status(camera, live),
         created_at=camera.created_at,
         updated_at=camera.updated_at,

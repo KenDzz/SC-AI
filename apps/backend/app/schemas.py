@@ -42,6 +42,7 @@ class CameraIn(BaseModel):
     enabled: bool = True
     ai_fps: int = Field(default=25, ge=1, le=30)
     assigned_worker: str | None = None
+    multi_view: bool = False
 
 
 class CameraUpdate(BaseModel):
@@ -52,6 +53,7 @@ class CameraUpdate(BaseModel):
     enabled: bool | None = None
     ai_fps: int | None = Field(default=None, ge=1, le=30)
     assigned_worker: str | None = None
+    multi_view: bool | None = None
 
 
 class CameraOut(BaseModel):
@@ -65,6 +67,7 @@ class CameraOut(BaseModel):
     enabled: bool
     ai_fps: int
     assigned_worker: str | None
+    multi_view: bool = False
     status: str
     created_at: datetime
     updated_at: datetime
@@ -75,6 +78,13 @@ class ZoneIn(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     zone_type: str
     polygon: list[list[float]]
+    reference_id: str | None = None
+
+
+class ZoneUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    polygon: list[list[float]] | None = None
+    reference_id: str | None = None
 
 
 class ZoneOut(BaseModel):
@@ -84,6 +94,7 @@ class ZoneOut(BaseModel):
     name: str
     zone_type: str
     polygon: list[list[float]]
+    reference_key: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -214,3 +225,4 @@ class HeartbeatIn(BaseModel):
     ai_mode: str = "DEMO"
     source_state: str = ""
     tracks: list[dict] = []
+    zones: list[dict] = []

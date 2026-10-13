@@ -6,7 +6,24 @@ import { useEffect, useState } from "react";
 import Shell from "@/components/shell";
 import { Badge, ErrorText, GhostButton, PrimaryButton, statusTone } from "@/components/ui";
 import { api, Camera, getUser, imageUrl } from "@/lib/api";
-import { PPE_HAIRNET, PPE_UNIFORM, STATUS_LABELS } from "@/lib/labels";
+import { STATUS_LABELS } from "@/lib/labels";
+
+type Check = { text: string; state: "violation" | "ok" | "unknown" };
+
+const CHECK_TONES: Record<Check["state"], string> = { violation: "red", ok: "green", unknown: "slate" };
+
+type ZoneState = { id: string; name: string; state: string; shift_pct: number };
+
+const ZONE_STATES: Record<string, { label: (zone: ZoneState) => string; tone: string }> = {
+  ALIGNED: { label: () => "On · view matches", tone: "green" },
+  SHIFTED: { label: (zone) => `On · moved with camera (${zone.shift_pct}%)`, tone: "blue" },
+  VIEW_CHANGED: { label: () => "Paused · camera view changed", tone: "red" },
+  OUT_OF_VIEW: { label: () => "Paused · out of view", tone: "red" },
+  UNVERIFIED: { label: () => "On · not linked to a view", tone: "slate" },
+  OTHER_VIEW: { label: () => "Hidden · another view is active", tone: "slate" },
+};
+
+const PAUSED_STATES = new Set(["VIEW_CHANGED", "OUT_OF_VIEW"]);
 
 type Live = {
   status: string;
@@ -16,7 +33,8 @@ type Live = {
   frames_processed?: number;
   dropped_frames?: number;
   source_state?: string;
-  tracks: { track_id: string; class_name: string; confidence: number; hairnet?: string; uniform?: string }[];
+  tracks: { track_id: string; class_name: string; confidence: number; hairnet?: string; uniform?: string; checks?: Check[] }[];
+  zones?: ZoneState[];
 };
 
 export default function CameraDetailPage() {
@@ -119,6 +137,8 @@ export default function CameraDetailPage() {
     setMessage(`AI FPS saved at ${value}. The worker picks it up on the next frame.`);
   }
 
+  const pausedZones = (live?.zones || []).filter((zone) => PAUSED_STATES.has(zone.state));
+
   return (
     <Shell title={camera?.name || "Camera"}>
       {error ? <div className="mb-3"><ErrorText>{error}</ErrorText></div> : null}
@@ -134,6 +154,11 @@ export default function CameraDetailPage() {
             <div className="text-sm font-medium">Camera view</div>
             <label className="flex items-center gap-2 text-sm"><input className="w-auto" type="checkbox" checked={overlay} onChange={(e) => setOverlay(e.target.checked)} /> Show AI overlay</label>
           </div>
+          {pausedZones.length ? (
+            <div className="mb-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-800">
+              {pausedZones.map((zone) => zone.name).join(", ")} {pausedZones.length === 1 ? "is" : "are"} paused because the camera no longer shows {pausedZones.length === 1 ? "it" : "them"}. Rules there resume when the view matches again, or <Link href={`/cameras/${params.id}/zones`} className="underline">redraw</Link> for the new view.
+            </div>
+          ) : null}
           {frame ? <img src={frame} alt="Latest camera frame" className="w-full rounded-md bg-stone-200" /> : <div className="grid h-72 place-items-center rounded-md bg-stone-100 text-sm text-slate-500">Waiting for the first frame</div>}
         </section>
         <aside className="space-y-3">
@@ -144,7 +169,15 @@ export default function CameraDetailPage() {
               {(live?.tracks || []).map((track) => (
                 <div key={track.track_id + track.class_name} className="rounded-md bg-paper px-3 py-2 text-sm">
                   <div className="font-medium">{track.class_name === "person" ? `Person ${track.track_id}` : `Forklift ${track.track_id}`}</div>
-                  {track.class_name === "person" ? <div>Hairnet: {PPE_HAIRNET[track.hairnet || "UNKNOWN"]} · Uniform: {PPE_UNIFORM[track.uniform || "UNKNOWN"]}</div> : null}
+                  {track.class_name === "person" ? (
+                    track.checks?.length ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {track.checks.map((check) => <Badge key={check.text} value={check.text} tone={CHECK_TONES[check.state] || "slate"} />)}
+                      </div>
+                    ) : (
+                      <div className="text-slate-500">Not in a zone with a rule</div>
+                    )
+                  ) : null}
                   <div className="text-xs text-slate-500">AI confidence {Math.round((track.confidence || 0) * 100)}%</div>
                 </div>
               ))}
@@ -153,6 +186,22 @@ export default function CameraDetailPage() {
               Measured {live?.ai_fps ?? 0} FPS · target {camera?.ai_fps ?? "—"} · {Math.round(live?.inference_ms || 0)} ms · {live?.frames_processed ?? 0} frames · {live?.dropped_frames ?? 0} dropped
             </div>
           </section>
+          {live?.zones?.length ? (
+            <section className="rounded-xl border border-line bg-white p-4">
+              <h2 className="text-sm font-semibold">Zones</h2>
+              <ul className="mt-3 space-y-2 text-sm">
+                {live.zones.map((zone) => {
+                  const state = ZONE_STATES[zone.state] || ZONE_STATES.UNVERIFIED;
+                  return (
+                    <li key={zone.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{zone.name}</span>
+                      <Badge value={state.label(zone)} tone={state.tone} />
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
           {admin && camera ? (
             <section className="space-y-2 rounded-xl border border-line bg-white p-4 text-sm">
               <h2 className="font-semibold">Camera settings</h2>
@@ -175,6 +224,13 @@ export default function CameraDetailPage() {
               <p className="text-xs text-slate-500">1–30. Press Enter or click away to save. Measured FPS is how fast this machine is actually running.</p>
               <label>RTSP or file key<input key={camera.stream_url || "none"} defaultValue={camera.stream_url || ""} onBlur={(e) => { if (e.target.value !== (camera.stream_url || "")) save({ stream_url: e.target.value }); }} /></label>
               <label>Assigned worker<input defaultValue={camera.assigned_worker || ""} placeholder="blank = any worker" onBlur={(e) => save({ assigned_worker: e.target.value || null } as Partial<Camera>)} /></label>
+              <label className="flex items-start gap-2">
+                <input className="mt-1 w-auto" type="checkbox" checked={Boolean(camera.multi_view)} onChange={(e) => save({ multi_view: e.target.checked })} />
+                <span>
+                  Camera has several views
+                  <span className="block text-xs text-slate-500">For PTZ presets. Zones locked to the same frame form one view; only the view that matches the camera now is shown and checked. Leave off for a fixed camera.</span>
+                </span>
+              </label>
               <GhostButton type="button" onClick={() => save({ enabled: !camera.enabled })}>{camera.enabled ? "Disable camera" : "Enable camera"}</GhostButton>
               <label className="block">Upload MP4<input className="mt-1" type="file" accept="video/mp4,.mp4" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) upload(file); }} /></label>
             </section>

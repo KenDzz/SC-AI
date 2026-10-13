@@ -1,5 +1,8 @@
+import numpy as np
+
+from app.detectors import DemoDetector
 from app.scenes import scripted_objects
-from app.zone_engine import point_in_polygon
+from app.zone_engine import bbox_foot_in_polygon, point_in_polygon
 
 RESTRICTED = {
     "zone_type": "RESTRICTED_AREA",
@@ -21,6 +24,13 @@ def test_walker_starts_outside_and_stands_inside():
 def test_hold_inside_places_the_walker_in_the_zone():
     person = scripted_objects([RESTRICTED], 0.0, True)[0]
     assert point_in_polygon(RESTRICTED["polygon"], person["nx"], person["ny"]) is True
+
+
+def test_demo_person_box_stands_in_the_zone():
+    frame = np.zeros((540, 960, 3), dtype=np.uint8)
+    person = DemoDetector().detect(frame, [RESTRICTED], 0.0, True)[0]
+    x1, y1, x2, y2 = person["bbox_xyxy"]
+    assert bbox_foot_in_polygon(RESTRICTED["polygon"], (x1 / 960, y1 / 540, x2 / 960, y2 / 540)) is True
 
 
 def test_packing_scene_has_a_zone_walker_and_an_unknown_person():
