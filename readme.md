@@ -83,14 +83,14 @@ Upload MP4 ở trang camera nếu muốn dùng video thật làm nền. Worker p
 
 Mặc định chạy CPU. Dashboard không cần GPU.
 
-`AI_MODE=REAL` dùng bộ phát hiện người có sẵn trong OpenCV. Hairnet và đồng phục trả về Không xác định cho đến khi có file model, nên không tự tạo vi phạm PPE.
+`AI_MODE=REAL` dùng YOLOX-Nano khi có `models/person.onnx`, nhận diện toàn thân mà không yêu cầu thấy mặt. Cách tải model chính thức và checksum nằm ở [models/README.md](models/README.md). Không có model thì dùng OpenCV HOG. Khi chưa có `ppe.onnx`, hairnet và đồng phục dùng bộ phân loại màu dự phòng, chỉ phù hợp kiểm thử POC.
 
 Đặt file ONNX vào thư mục `models/`:
 
 | File | Hợp đồng |
 |---|---|
-| `person.onnx` | Ra tensor Nx6: x1, y1, x2, y2, score, class. Class 0 là người. |
-| `forklift.onnx` | Cùng hợp đồng. Class 1 là forklift. |
+| `person.onnx` | YOLOX-Nano chính thức: đầu vào 1x3x416x416 BGR 0..255, đầu ra raw 1x3549x85; class COCO 0 là người. |
+| `forklift.onnx` | Ra tensor Nx6: x1, y1, x2, y2, score, class trong tọa độ ảnh đầu vào model. Class 1 là forklift. |
 | `ppe.onnx` | Ảnh 128x128, 6 logit: hairnet Có/Không/Không xác định, rồi đồng phục Đúng/Sai/Không xác định. |
 
 GPU trên máy Linux có NVIDIA Container Toolkit:

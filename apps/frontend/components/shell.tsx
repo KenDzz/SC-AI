@@ -10,7 +10,6 @@ const LINKS = [
   { href: "/cameras", label: "Cameras" },
   { href: "/rules", label: "Rules" },
   { href: "/incidents", label: "Incidents" },
-  { href: "/models", label: "AI models" },
   { href: "/evaluation", label: "Evaluation" },
 ];
 

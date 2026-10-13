@@ -1,8 +1,7 @@
 """Model adapters.
 
 DEMO_MODE uses scripted detections so the workflow can be shown without weights.
-REAL_AI_MODE uses the OpenCV HOG person detector (shipped with OpenCV, Apache-2.0)
-unless an ONNX file with the documented Nx6 contract is mounted.
+REAL_AI_MODE uses an installed ONNX person detector, with HOG as the fallback.
 """
 
 from pathlib import Path
@@ -56,8 +55,6 @@ class HogPersonDetector:
         detections = []
         for (x, y, w, h), weight in zip(rects, weights):
             box = [x * inverse, y * inverse, (x + w) * inverse, (y + h) * inverse]
-            if not _box_has_head(frame, box):
-                continue
             detections.append(
                 {
                     "class_name": "person",
@@ -375,8 +372,9 @@ def _head_masks(image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return skin, cap, hair
 
 
-def _nms(detections: list[dict], threshold: float) -> list[dict]:
-    ordered = sorted(detections, key=lambda item: item["bbox_xyxy"][3] - item["bbox_xyxy"][1], reverse=True)
+def _nms(detections: list[dict], threshold: float, by_confidence: bool = False) -> list[dict]:
+    key = (lambda item: item["confidence"]) if by_confidence else (lambda item: item["bbox_xyxy"][3] - item["bbox_xyxy"][1])
+    ordered = sorted(detections, key=key, reverse=True)
     kept = []
     for detection in ordered:
         if all(_iou(detection["bbox_xyxy"], other["bbox_xyxy"]) < threshold for other in kept):
@@ -435,7 +433,7 @@ class YoloxPersonDetector:
             box_w = np.exp(np.clip(feature[:, 2], -6, 6)) * stride
             box_h = np.exp(np.clip(feature[:, 3], -6, 6)) * stride
             score = feature[:, 4] * feature[:, 5]
-            for index in np.where(score > 0.35)[0]:
+            for index in np.where(score > 0.55)[0]:
                 x1 = (center_x[index] - box_w[index] / 2 - pad_x) / scale
                 y1 = (center_y[index] - box_h[index] / 2 - pad_y) / scale
                 x2 = (center_x[index] + box_w[index] / 2 - pad_x) / scale
@@ -454,7 +452,7 @@ class YoloxPersonDetector:
                         "ppe_mode": "model",
                     }
                 )
-        return _nms(detections, 0.45)
+        return _nms(detections, 0.45, by_confidence=True)
 
 
 def _letterbox(frame: np.ndarray, size: int) -> tuple[np.ndarray, float, int, int]:
@@ -462,10 +460,10 @@ def _letterbox(frame: np.ndarray, size: int) -> tuple[np.ndarray, float, int, in
     scale = min(size / width, size / height)
     resized = cv2.resize(frame, (int(width * scale), int(height * scale)))
     canvas = np.full((size, size, 3), 114, dtype=np.float32)
-    pad_x = (size - resized.shape[1]) // 2
-    pad_y = (size - resized.shape[0]) // 2
-    canvas[pad_y : pad_y + resized.shape[0], pad_x : pad_x + resized.shape[1]] = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    return canvas, scale, pad_x, pad_y
+    # Official YOLOX ONNX preprocessing keeps BGR values in 0..255 and
+    # places the resized image at the top left, padding bottom/right.
+    canvas[: resized.shape[0], : resized.shape[1]] = resized
+    return canvas, scale, 0, 0
 
 
 def build_detectors(mode: str, model_path: str, device: str):
@@ -483,8 +481,8 @@ def build_detectors(mode: str, model_path: str, device: str):
         detector = YoloxPersonDetector(str(person_onnx), providers)
         person_name, person_version = "yolox-nano", "apache-2.0"
     else:
-        detector = FactoryPersonDetector()
-        person_version = "factory-head-v1"
+        detector = HogPersonDetector()
+        person_version = "hog-v1"
     if forklift_onnx.exists() and not isinstance(detector, OnnxObjectDetector):
         # A dedicated forklift file is used by wrapping both detectors below.
         pass
