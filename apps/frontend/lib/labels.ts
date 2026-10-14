@@ -79,3 +79,35 @@ export function percent(value?: number | null) {
   if (value === null || value === undefined) return "—";
   return `${Math.round(value * 100)}%`;
 }
+
+const FACTORY_TZ = "Asia/Ho_Chi_Minh";
+
+// "23:31:04", factory time.
+export function formatTime(value?: string | Date | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-GB", { timeZone: FACTORY_TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(date);
+}
+
+// "14 Oct", factory time.
+export function formatDay(value?: string | Date | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", { timeZone: FACTORY_TZ, day: "2-digit", month: "short" }).format(date);
+}
+
+// "14 Oct 2026", factory time.
+export function formatDate(value: Date) {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: FACTORY_TZ, day: "2-digit", month: "short", year: "numeric" }).format(value);
+}
+
+export function shortId(id: string) {
+  return `INC-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+}
+
+// Cinzel has no Vietnamese tone marks (ơ, ư, ạ…ỹ). Text that needs them falls back to the UI face instead of mixing fonts.
+export function displayFont(text: string) {
+  return /[̀-ͯƠ-ưẠ-ỹ]/.test(text.normalize("NFC")) ? "font-sans" : "font-display";
+}

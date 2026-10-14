@@ -19,6 +19,7 @@ from app.services import display_status, incident_out, read_live, read_lives
 from app.timeutils import FACTORY_TZ, ensure_utc, today_bounds
 
 router = APIRouter(tags=["system"])
+SEVERITY_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 backend_up = Gauge("safety_backend_up", "Backend process is serving")
 backend_up.set(1)
 
@@ -75,12 +76,26 @@ def overview(db: Session = Depends(get_db), _: User = Depends(get_current_user))
     reviewed = [item for item in today if item.status in {"CONFIRMED", "FALSE_POSITIVE", "RESOLVED"}]
     false_positives = [item for item in reviewed if item.status == "FALSE_POSITIVE"]
     rate = (len(false_positives) / len(reviewed)) if reviewed else 0.0
-    buckets = Counter()
+    by_hour: dict[int, list[Incident]] = {hour: [] for hour in range(24)}
     for item in today:
-        local = ensure_utc(item.started_at).astimezone(FACTORY_TZ)
-        buckets[local.strftime("%H:00")] += 1
-    trend = [{"hour": f"{hour:02d}:00", "count": buckets.get(f"{hour:02d}:00", 0)} for hour in range(24)]
+        by_hour[ensure_utc(item.started_at).astimezone(FACTORY_TZ).hour].append(item)
+    trend = [
+        {"hour": f"{hour:02d}:00", "count": len(rows), "critical": sum(1 for row in rows if row.severity == "CRITICAL")}
+        for hour, rows in by_hour.items()
+    ]
     cameras = db.query(Camera).all()
+    camera_names = {camera.id: camera.name for camera in cameras}
+    peak = None
+    if today:
+        # Ties go to the earliest hour.
+        peak_hour = max(by_hour, key=lambda hour: len(by_hour[hour]))
+        rows = by_hour[peak_hour]
+        peak = {
+            "hour": f"{peak_hour:02d}:00",
+            "count": len(rows),
+            "event_type": Counter(row.event_type for row in rows).most_common(1)[0][0],
+            "camera_name": camera_names.get(Counter(row.camera_id for row in rows).most_common(1)[0][0]),
+        }
     active = sum(1 for camera in cameras if display_status(camera, read_live(camera.id)) in {"ONLINE", "AI_PROCESSING"})
     latest_rows = (
         db.query(Incident)
@@ -98,7 +113,10 @@ def overview(db: Session = Depends(get_db), _: User = Depends(get_current_user))
         "false_positive_rate": round(rate, 4),
         "false_positive_count": len(false_positives),
         "reviewed_count": len(reviewed),
+        "new_incidents": db.query(Incident).filter(Incident.status == "NEW").count(),
+        "camera_incidents_today": dict(Counter(item.camera_id for item in today)),
         "trend": trend,
+        "peak": peak,
         "latest": [incident_out(row).model_dump(mode="json") for row in latest_rows],
     }
 
@@ -110,6 +128,11 @@ def evaluation(format: str = "json", db: Session = Depends(get_db), _: User = De
     false_positives = [item for item in reviewed if item.status == "FALSE_POSITIVE"]
     confidences = [item.confidence for item in incidents if item.confidence is not None]
     by_type = Counter(item.event_type for item in incidents)
+    by_severity: dict[str, str] = {}
+    for item in incidents:
+        current = by_severity.get(item.event_type)
+        if current is None or SEVERITY_RANK.get(item.severity, 0) > SEVERITY_RANK.get(current, 0):
+            by_severity[item.event_type] = item.severity
     lives = read_lives()
     payload = {
         "incidents": len(incidents),
@@ -118,6 +141,7 @@ def evaluation(format: str = "json", db: Session = Depends(get_db), _: User = De
         "false_positive_rate": round((len(false_positives) / len(reviewed)) if reviewed else 0.0, 4),
         "average_confidence": round(sum(confidences) / len(confidences), 4) if confidences else None,
         "by_event_type": dict(by_type),
+        "by_event_severity": by_severity,
         "frames_processed": sum(int(item.get("frames_processed") or 0) for item in lives),
         "dropped_frames": sum(int(item.get("dropped_frames") or 0) for item in lives),
         "average_inference_ms": round(
