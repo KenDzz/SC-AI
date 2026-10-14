@@ -253,3 +253,24 @@ def test_multi_view_is_off_by_default_and_reaches_the_worker():
         worker = api.get("/api/internal/cameras", headers={"X-Internal-Token": "test-internal"}).json()
         assert next(item for item in worker if item["id"] == camera["id"])["multi_view"] is True
         api.patch(f"/api/cameras/{camera['id']}", headers=headers, json={"multi_view": False})
+
+
+def test_overview_splits_the_trend_by_severity_and_names_the_peak():
+    with client() as api:
+        headers = auth(api, "admin", "admin123")
+        data = api.get("/api/system/overview", headers=headers).json()
+        assert len(data["trend"]) == 24
+        assert all(0 <= item["critical"] <= item["count"] for item in data["trend"])
+        assert sum(item["count"] for item in data["trend"]) == data["incidents_today"]
+        assert sum(item["critical"] for item in data["trend"]) == data["critical_incidents"]
+        assert sum(data["camera_incidents_today"].values()) == data["incidents_today"]
+        assert data["new_incidents"] == api.get("/api/incidents?status=NEW", headers=headers).json()["total"]
+        if data["incidents_today"]:
+            busiest = max(item["count"] for item in data["trend"])
+            assert data["peak"]["count"] == busiest
+            assert data["peak"]["hour"] == next(item["hour"] for item in data["trend"] if item["count"] == busiest)
+            assert data["peak"]["camera_name"]
+        else:
+            assert data["peak"] is None
+        report = api.get("/api/system/evaluation", headers=headers).json()
+        assert set(report["by_event_severity"]) == set(report["by_event_type"])

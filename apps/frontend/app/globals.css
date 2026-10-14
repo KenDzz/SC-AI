@@ -4,16 +4,50 @@
 
 @layer base {
   body {
-    background: #f4f1ea;
-    color: #1c2430;
+    @apply bg-paper text-bark-800 antialiased;
+  }
+
+  ::selection {
+    @apply bg-gold-200 text-bark-900;
+  }
+
+  :focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-gold-500;
   }
 
   input, select, textarea {
-    @apply w-full rounded-md border border-line bg-white px-3 py-2 text-sm outline-none ring-pine focus:ring-2;
+    @apply w-full rounded-lg border border-line-strong bg-surface px-3 py-2.5 text-sm text-bark-800 outline-none transition-colors placeholder:text-bark-300 focus:border-gold-500 focus:ring-2 focus:ring-gold-100;
+  }
+
+  input[type="range"] {
+    @apply border-0 bg-transparent px-0 py-0 accent-gold-600 focus:ring-0;
   }
 
   button {
-    @apply rounded-md px-3 py-2 text-sm font-medium;
+    @apply rounded-lg px-3 py-2 text-sm font-medium transition-colors;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-line bg-surface;
+  }
+
+  .panel-dark {
+    @apply relative overflow-hidden rounded-xl bg-ink text-husk-100;
+  }
+
+  .link {
+    @apply font-semibold text-gold-700 hover:text-gold-800;
+  }
+
+  .eyebrow {
+    @apply font-display text-[11px] font-semibold uppercase tracking-[0.2em];
+  }
+
+  /* Inputs on espresso cards (New rule form). */
+  .field-dark {
+    @apply border-ink-field bg-ink-raised text-husk-50 focus:border-gold-500 focus:ring-gold-500/20;
   }
 }
 
@@ -22,9 +56,17 @@ table {
 }
 
 th {
-  @apply border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500;
+  @apply border-b border-line-soft bg-sand px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-bark-400;
 }
 
 td {
-  @apply border-b border-line px-3 py-2 align-middle;
+  @apply border-b border-line-soft px-4 py-3 align-middle;
+}
+
+tbody tr {
+  @apply transition-colors hover:bg-gold-50;
+}
+
+tbody tr:last-child td {
+  @apply border-b-0;
 }

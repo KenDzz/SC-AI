@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useApp } from "@/components/providers";
 import Shell from "@/components/shell";
-import { Badge, ErrorText, GhostButton, PrimaryButton, severityTone } from "@/components/ui";
+import { ErrorText, SeverityTag, Switch } from "@/components/ui";
 import { api, getUser, Rule, Zone } from "@/lib/api";
 import { CONDITION_LABELS, eventLabel, ZONE_LABELS } from "@/lib/labels";
 
@@ -17,6 +18,7 @@ const TEMPLATES = [
 ];
 
 export default function RulesPage() {
+  const { toast } = useApp();
   const [rules, setRules] = useState<Rule[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [template, setTemplate] = useState(TEMPLATES[0].label);
@@ -58,53 +60,76 @@ export default function RulesPage() {
           enabled: true,
         }),
       });
+      toast(`Rule saved · ${name}`);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the rule");
     }
   }
 
+  async function setEnabled(rule: Rule, enabled: boolean) {
+    setError("");
+    try {
+      await api(`/api/rules/${rule.id}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not change the rule");
+    }
+  }
+
+  const label = "flex flex-col gap-1.5 text-[12.5px] text-husk-300";
+
   return (
     <Shell title="Rules">
-      {error ? <div className="mb-3"><ErrorText>{error}</ErrorText></div> : null}
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+      {error ? <ErrorText>{error}</ErrorText> : null}
+      <div className="flex flex-wrap items-start gap-5">
         {admin ? (
-          <form onSubmit={create} className="space-y-3 rounded-xl border border-line bg-white p-4">
-            <h2 className="font-semibold">New rule</h2>
-            <label className="text-sm">Template
-              <select value={template} onChange={(e) => { setTemplate(e.target.value); setName(e.target.value); const next = TEMPLATES.find((item) => item.label === e.target.value); if (next) setSeconds(next.min_duration_s); }}>
+          <form onSubmit={create} className="panel-dark flex max-w-full flex-[1_1_280px] flex-col gap-3.5 p-[22px]">
+            <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-rays-soft" aria-hidden="true" />
+            <h2 className="relative font-display text-lg font-semibold text-gold-200">New rule</h2>
+            <label className={label}>Template
+              <select className="field-dark" value={template} onChange={(e) => { setTemplate(e.target.value); setName(e.target.value); const next = TEMPLATES.find((item) => item.label === e.target.value); if (next) setSeconds(next.min_duration_s); }}>
                 {TEMPLATES.map((item) => <option key={item.label}>{item.label}</option>)}
               </select>
             </label>
-            <label className="text-sm">Name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
-            <label className="text-sm">Zone
-              <select value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
+            <label className={label}>Name<input className="field-dark" value={name} onChange={(e) => setName(e.target.value)} required /></label>
+            <label className={label}>Zone
+              <select className="field-dark" value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
                 {zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name} · {ZONE_LABELS[zone.zone_type]}</option>)}
               </select>
             </label>
-            <label className="text-sm">Minimum duration (seconds)<input type="number" min={0} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} /></label>
-            <label className="text-sm">Cooldown (seconds)<input type="number" min={0} value={cooldown} onChange={(e) => setCooldown(Number(e.target.value))} /></label>
-            <p className="text-xs text-slate-500">
+            <div className="grid grid-cols-2 gap-2.5">
+              <label className={label}>Min duration (s)<input className="field-dark" type="number" min={0} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} /></label>
+              <label className={label}>Cooldown (s)<input className="field-dark" type="number" min={0} value={cooldown} onChange={(e) => setCooldown(Number(e.target.value))} /></label>
+            </div>
+            <p className="text-xs leading-normal text-husk-500">
               {CONDITION_LABELS[chosen.condition_type]}.{" "}
               {chosen.condition_type === "DEFECT_RATE"
                 ? "Opens when the recent share of defective beans stays above 15%."
                 : "Unknown hairnet or uniform results do not raise an alert."}
             </p>
-            <PrimaryButton type="submit">Save rule</PrimaryButton>
+            <button type="submit" className="bg-gold-bar py-3 font-bold text-bark-900 hover:brightness-[1.07]">Save rule</button>
           </form>
         ) : null}
-        <div className="overflow-auto rounded-xl border border-line bg-white">
-          <table>
-            <thead><tr><th>Rule</th><th>Zone</th><th>Violation</th><th>Duration</th><th>Severity</th><th></th></tr></thead>
+        <div className="panel min-w-0 flex-[999_1_620px] overflow-auto">
+          <table className="min-w-[760px]">
+            <thead><tr><th>Rule</th><th>Zone</th><th>Violation</th><th>Timing</th><th>Severity</th><th className="text-right">On</th></tr></thead>
             <tbody>
               {rules.map((rule) => (
-                <tr key={rule.id}>
-                  <td>{rule.name}<div className="text-xs text-slate-500">{rule.camera_name}</div></td>
-                  <td>{rule.zone_name}</td>
-                  <td>{eventLabel(rule.event_type)}</td>
-                  <td>{rule.min_duration_ms / 1000}s · cooldown {rule.cooldown_ms / 1000}s</td>
-                  <td><Badge value={rule.severity} tone={severityTone(rule.severity)} /></td>
-                  <td>{admin ? <GhostButton onClick={() => api(`/api/rules/${rule.id}`, { method: rule.enabled ? "PATCH" : "PATCH", body: JSON.stringify({ enabled: !rule.enabled }) }).then(load)}>{rule.enabled ? "Disable" : "Enable"}</GhostButton> : rule.enabled ? "On" : "Off"}</td>
+                <tr key={rule.id} className={rule.enabled ? "" : "opacity-45"}>
+                  <td>
+                    <div className="text-sm font-semibold">{rule.name}</div>
+                    <div className="text-xs text-bark-400">{rule.camera_name}</div>
+                  </td>
+                  <td className="text-[13.5px]">{rule.zone_name}</td>
+                  <td className="text-[13.5px]">{eventLabel(rule.event_type)}</td>
+                  <td className="whitespace-nowrap font-mono text-xs text-bark-600">{rule.min_duration_ms / 1000}s · cd {rule.cooldown_ms / 1000}s</td>
+                  <td><SeverityTag severity={rule.severity} /></td>
+                  <td>
+                    <div className="flex justify-end">
+                      {admin ? <Switch size="sm" checked={rule.enabled} onChange={(next) => setEnabled(rule, next)} label={`${rule.enabled ? "Disable" : "Enable"} ${rule.name}`} /> : <span className="text-xs text-bark-500">{rule.enabled ? "On" : "Off"}</span>}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

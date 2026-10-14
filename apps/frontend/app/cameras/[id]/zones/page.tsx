@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Shell from "@/components/shell";
@@ -62,14 +61,16 @@ export default function ZonesPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
+    const fontFamily = getComputedStyle(canvas).fontFamily;
     if (image) ctx.drawImage(image, 0, 0, width, height);
     else {
-      ctx.fillStyle = "#e7e2d8";
+      ctx.fillStyle = "#221810";
       ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = "#64748b";
+      ctx.fillStyle = "#8C7A64";
+      ctx.font = `14px ${fontFamily}`;
       ctx.fillText("Waiting for a camera frame", 24, 32);
     }
-    const draw = (poly: number[][], color: string, close: boolean, options: { dashed?: boolean; label?: string } = {}) => {
+    const draw = (poly: number[][], color: string, close: boolean, options: { dashed?: boolean; label?: string; labelText?: string } = {}) => {
       if (poly.length === 0) return;
       ctx.beginPath();
       poly.forEach(([x, y], index) => {
@@ -98,20 +99,21 @@ export default function ZonesPage() {
       }
       if (options.label) {
         const [x, y] = poly[0];
-        ctx.font = "13px Segoe UI, Arial, sans-serif";
+        ctx.font = `600 13px ${fontFamily}`;
         const textWidth = ctx.measureText(options.label).width;
         const top = Math.max(0, y * height - 24);
         ctx.fillStyle = color;
         ctx.fillRect(x * width, top, textWidth + 10, 20);
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = options.labelText || "#ffffff";
         ctx.fillText(options.label, x * width + 5, top + 14);
       }
     };
+    // Saved zones wear brand gold (ink label for contrast); the shape being drawn is blue so it never reads as saved.
     zones.forEach((zone) => {
-      if (zone.id === editing?.id) draw(zone.polygon, "#64748b", true, { dashed: true, label: `${zone.name} (current)` });
-      else draw(zone.polygon, "#1f6b4a", true, { label: zone.name });
+      if (zone.id === editing?.id) draw(zone.polygon, "#A3927F", true, { dashed: true, label: `${zone.name} (current)` });
+      else draw(zone.polygon, "#E3BE74", true, { label: zone.name, labelText: "#1E150E" });
     });
-    draw(points, "#b45309", points.length > 2);
+    draw(points, "#2b7fc4", points.length > 2);
   }, [image, zones, points, editing]);
 
   function addPoint(event: React.MouseEvent<HTMLCanvasElement>) {
@@ -171,32 +173,29 @@ export default function ZonesPage() {
   });
 
   return (
-    <Shell title="Zone configuration">
-      <div className="mb-3 flex items-center justify-between">
-        <Link href={`/cameras/${params.id}`} className="text-sm text-pine">Back to camera</Link>
-        <span className="text-sm text-slate-500">Points are saved as fractions of the frame, from 0 to 1.</span>
-      </div>
-      {error ? <div className="mb-3"><ErrorText>{error}</ErrorText></div> : null}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <canvas ref={canvasRef} onClick={addPoint} className="w-full cursor-crosshair rounded-xl border border-line bg-white" />
+    <Shell title="Zone configuration" back={{ href: `/cameras/${params.id}`, label: "Camera" }}>
+      <p className="-mt-2 text-sm text-bark-500">Points are saved as fractions of the frame, from 0 to 1.</p>
+      {error ? <ErrorText>{error}</ErrorText> : null}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <canvas ref={canvasRef} onClick={addPoint} className="w-full cursor-crosshair panel" />
         <div className="space-y-3">
           {admin ? (
-            <div className="space-y-2 rounded-xl border border-line bg-white p-4">
+            <div className="panel space-y-3 p-5">
               <h2 className="text-sm font-semibold">{editing ? `Redraw ${editing.name}` : "New zone"}</h2>
-              <label className="text-sm">Zone name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-              <label className="text-sm">Zone type
+              <label className="block text-sm font-medium">Zone name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+              <label className="block text-sm font-medium">Zone type
                 <select value={zoneType} onChange={(e) => setZoneType(e.target.value)} disabled={Boolean(editing)}>
                   {TYPES.map((type) => <option key={type} value={type}>{ZONE_LABELS[type]}</option>)}
                 </select>
               </label>
               {zoneType === "GREEN_COFFEE_LINE" || zoneType === "ROASTED_COFFEE_LINE" || zoneType === "COFFEE_COUNT_LINE" ? (
-                <p className="text-xs text-slate-500">Draw the belt. Each bean is counted once when it crosses the horizontal middle, moving down the frame. Green and roasted belts also grade defects. The count belt only totals quantity.</p>
+                <p className="text-xs text-bark-500">Draw the belt. Each bean is counted once when it crosses the horizontal middle, moving down the frame. Green and roasted belts also grade defects. The count belt only totals quantity.</p>
               ) : null}
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-bark-500">
                 {points.length} points. Click the corners in order around the area. Any number of corners works.
                 {editing ? " The dashed outline is the current shape. Its rules and past incidents stay linked." : ""}
               </div>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-bark-500">
                 {referenceId
                   ? "Zones saved here remember this frame. If the camera moves a little they follow it; if the view changes too much they pause."
                   : "No camera frame to remember yet. Zones saved now stay where they are drawn even if the camera moves."}
@@ -210,29 +209,29 @@ export default function ZonesPage() {
                 {editing ? <GhostButton type="button" onClick={stopRedraw}>Cancel</GhostButton> : null}
               </div>
             </div>
-          ) : <p className="text-sm text-slate-600">Viewers can see zones. An admin draws them.</p>}
-          <div className="rounded-xl border border-line bg-white p-4">
+          ) : <p className="text-sm text-bark-600">Viewers can see zones. An admin draws them.</p>}
+          <div className="panel p-5">
             <h2 className="text-sm font-semibold">Saved zones</h2>
             <ul className="mt-2 space-y-2 text-sm">
               {zones.map((zone) => (
-                <li key={zone.id} className={`flex items-center justify-between gap-2 ${zone.id === editing?.id ? "rounded-md bg-amber-50 px-2 py-1" : ""}`}>
+                <li key={zone.id} className={`flex items-center justify-between gap-2 ${zone.id === editing?.id ? "rounded bg-gold-50 px-2 py-1 ring-1 ring-inset ring-gold-200" : ""}`}>
                   <span>
                     {zone.name}
-                    <span className="block text-xs text-slate-500">{ZONE_LABELS[zone.zone_type] || zone.zone_type} · {zone.polygon.length} corners</span>
-                    <span className="block text-xs text-slate-500">{zone.reference_key ? `Follows camera moves · View ${viewNumbers.get(zone.reference_key)}` : "Not linked to a camera view"}</span>
+                    <span className="block text-xs text-bark-500">{ZONE_LABELS[zone.zone_type] || zone.zone_type} · {zone.polygon.length} corners</span>
+                    <span className="block text-xs text-bark-500">{zone.reference_key ? `Follows camera moves · View ${viewNumbers.get(zone.reference_key)}` : "Not linked to a camera view"}</span>
                   </span>
                   {admin ? (
                     <span className="flex flex-wrap justify-end gap-x-3">
-                      <button className="text-xs text-pine" onClick={() => startRedraw(zone)}>Redraw</button>
+                      <button className="link p-0 text-xs" onClick={() => startRedraw(zone)}>Redraw</button>
                       {referenceId ? (
-                        <button className="text-xs text-pine" title="Use when the zone already matches this frame. Zones locked together form one view." onClick={() => lockToView(zone)}>Lock to this view</button>
+                        <button className="link p-0 text-xs" title="Use when the zone already matches this frame. Zones locked together form one view." onClick={() => lockToView(zone)}>Lock to this view</button>
                       ) : null}
-                      <button className="text-xs text-rose-700" onClick={() => api(`/api/zones/${zone.id}`, { method: "DELETE" }).then(() => { if (zone.id === editing?.id) stopRedraw(); loadZones(); })}>Delete</button>
+                      <button className="p-0 text-xs font-semibold text-crimson-700 hover:text-crimson-800" onClick={() => api(`/api/zones/${zone.id}`, { method: "DELETE" }).then(() => { if (zone.id === editing?.id) stopRedraw(); loadZones(); })}>Delete</button>
                     </span>
                   ) : null}
                 </li>
               ))}
-              {zones.length === 0 ? <li className="text-slate-500">No zones yet.</li> : null}
+              {zones.length === 0 ? <li className="text-bark-500">No zones yet.</li> : null}
             </ul>
           </div>
         </div>
