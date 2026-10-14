@@ -54,17 +54,21 @@ flowchart LR
 
 Worker xử lý hình tại chỗ. API chỉ nhận incident, ảnh, và cấu hình. Dashboard nhận incident mới qua Server-Sent Events.
 
-## Năm tình huống mẫu
+## Tình huống mẫu
 
-Dữ liệu khởi tạo có nhà máy Coffee Factory POC, bốn camera, năm vùng và năm luật:
+Dữ liệu khởi tạo có nhà máy Coffee Factory POC, năm camera, tám vùng và bảy luật:
 
 1. Vùng cấm — người đứng trong vùng quá thời gian cấu hình.
 2. Hairnet — chỉ trạng thái Không mới tạo incident. Không xác định thì không báo.
 3. Đồng phục — chỉ trạng thái Sai mới tạo incident.
 4. Vùng nguy hiểm máy — người đi vào polygon của máy.
 5. Làn forklift — người đi vào làn. Xe forklift được vẽ để demo; cảnh báo dựa trên người.
+6. Dây chuyền hạt — camera `CAM-BEAN-01` có ba băng, hạt chạy từ trên xuống:
+   - Hạt xanh: đếm và phân loại good, black, broken, fade, sour. Tỷ lệ lỗi trong cửa sổ gần nhất vượt 15% thì tạo incident.
+   - Hạt rang: đếm và phân loại good, quaker, burnt, insect, mould. Cùng ngưỡng 15%.
+   - Chỉ đếm: mỗi hạt cộng một lần khi cắt vạch giữa băng, không chấm điểm lỗi.
 
-Trong **AI Mode: DEMO**, worker tự tạo người đi vào từng vùng. Nhãn hairnet và đồng phục đi theo loại vùng, để buổi demo không cần file model. Banner trên dashboard ghi rõ đang ở DEMO.
+Trong **AI Mode: DEMO**, worker tự tạo người đi vào từng vùng an toàn, và tự cho hạt chạy trên ba băng. Nhãn hairnet và đồng phục đi theo loại vùng. Hạt demo không cần file model. Banner trên dashboard ghi rõ đang ở DEMO.
 
 Nút **Simulate an incident** trên trang camera giữ người đứng trong vùng vài giây để luật chạy ngay.
 
@@ -110,6 +114,7 @@ Mỗi camera chạy model với `AI_THREADS` luồng, mặc định 2, và các 
 | `person.onnx` | YOLOX-Nano chính thức: đầu vào 1x3x416x416 BGR 0..255, đầu ra raw 1x3549x85; class COCO 0 là người. |
 | `forklift.onnx` | Ra tensor Nx6: x1, y1, x2, y2, score, class trong tọa độ ảnh đầu vào model. Class 1 là forklift. |
 | `ppe.onnx` | Ảnh 128x128, 6 logit: hairnet Có/Không/Không xác định, rồi đồng phục Đúng/Sai/Không xác định. |
+| `coffee.onnx` | ONNX của YOLO chín lớp: 0 good, 1 black, 2 broken, 3 fade, 4 sour, 5 quaker, 6 burnt, 7 insect, 8 mould. Chấp nhận tensor Nx6 hoặc đầu YOLO Ultralytics `(1, 13, anchors)`. Băng xanh nhận 0–4, băng rang nhận 0 và 5–8, băng đếm nhận mọi class thành một hạt. `prepare_public_beans.py` dựng `data/coffee-yolo` từ ảnh công khai; fade và sour không có lớp tương ứng trong hai bộ đó. Không có file này thì REAL dùng màu và hình dạng. |
 
 GPU trên máy Linux có NVIDIA Container Toolkit:
 
@@ -157,4 +162,4 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Backend và worker phải healthy. Đăng nhập xong phải thấy 4 camera và các incident mẫu.
+Backend và worker phải healthy. Đăng nhập xong phải thấy 5 camera, gồm Bean Line Camera 01, và các incident mẫu.

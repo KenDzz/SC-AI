@@ -24,7 +24,7 @@ def test_health_and_seed_login():
         cameras = api.get("/api/cameras", headers=headers)
         assert cameras.status_code == 200
         codes = {item["code"] for item in cameras.json()}
-        assert codes == {"CAM-PACK-01", "CAM-PROD-01", "CAM-MACHINE-01", "CAM-WAREHOUSE-01"}
+        assert codes == {"CAM-PACK-01", "CAM-PROD-01", "CAM-MACHINE-01", "CAM-WAREHOUSE-01", "CAM-BEAN-01"}
         rules = api.get("/api/rules", headers=headers).json()
         assert {item["event_type"] for item in rules} == {
             "HAIRNET_VIOLATION",
@@ -32,6 +32,8 @@ def test_health_and_seed_login():
             "MACHINE_DANGER_ZONE_INTRUSION",
             "RESTRICTED_AREA_INTRUSION",
             "PEDESTRIAN_IN_FORKLIFT_ZONE",
+            "GREEN_COFFEE_DEFECT_RATE",
+            "ROASTED_COFFEE_DEFECT_RATE",
         }
         assert api.get("/api/incidents", headers=headers).json()["total"] >= 9
 
@@ -55,13 +57,95 @@ def test_viewer_cannot_configure_and_safety_can_review():
         assert again.status_code == 409
 
 
+def test_green_bean_incident_is_reviewable_and_live_returns_coffee(monkeypatch):
+    stored: dict[str, dict] = {}
+    monkeypatch.setattr("app.routers.internal.write_live", lambda camera_id, payload: stored.__setitem__(camera_id, payload))
+    monkeypatch.setattr("app.routers.catalog.read_live", lambda camera_id: stored.get(camera_id))
+    with client() as api:
+        headers = auth(api, "admin", "admin123")
+        cameras = api.get("/api/internal/cameras", headers={"X-Internal-Token": "test-internal"}).json()
+        bean = next(item for item in cameras if item["code"] == "CAM-BEAN-01")
+        rule = next(item for item in bean["rules"] if item["event_type"] == "GREEN_COFFEE_DEFECT_RATE")
+        opened = api.post(
+            "/api/internal/incidents",
+            headers={"X-Internal-Token": "test-internal"},
+            json={
+                "factory_id": bean["factory_id"],
+                "camera_id": bean["id"],
+                "zone_id": rule["zone_id"],
+                "rule_id": rule["id"],
+                "event_type": "GREEN_COFFEE_DEFECT_RATE",
+                "severity": "HIGH",
+                "track_id": f"line-{rule['zone_id']}",
+                "confidence": 0.75,
+                "started_at": "2026-10-13T01:00:00Z",
+                "model_name": "coffee-line",
+                "model_version": "v0-demo",
+                "ai_mode": "DEMO",
+            },
+        )
+        assert opened.status_code == 200, opened.text
+        body = opened.json()
+        assert body["reason"] == "created"
+        safety = auth(api, "safety", "safety123")
+        confirmed = api.post(f"/api/incidents/{body['id']}/confirm", headers=safety, json={"comment": "Defect rate checked"})
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["status"] == "CONFIRMED"
+        assert confirmed.json()["event_type"] == "GREEN_COFFEE_DEFECT_RATE"
+        beat = api.post(
+            f"/api/internal/cameras/{bean['id']}/heartbeat",
+            headers={"X-Internal-Token": "test-internal"},
+            json={
+                "status": "ONLINE",
+                "ai_mode": "DEMO",
+                "coffee": [
+                    {
+                        "zone_id": rule["zone_id"],
+                        "name": "Green coffee belt",
+                        "stage": "green",
+                        "total": 8,
+                        "window_total": 8,
+                        "defects": 6,
+                        "defect_rate": 0.75,
+                        "by_class": {"black": 2, "good": 2},
+                        "in_frame": 1,
+                    },
+                    {
+                        "zone_id": "count-belt",
+                        "name": "Coffee count belt",
+                        "stage": "count",
+                        "total": 4,
+                        "window_total": 4,
+                        "defects": 0,
+                        "defect_rate": 0,
+                        "by_class": {"bean": 4},
+                        "in_frame": 1,
+                    },
+                ],
+            },
+        )
+        assert beat.status_code == 200, beat.text
+        live = api.get(f"/api/cameras/{bean['id']}/live", headers=headers)
+        assert live.status_code == 200, live.text
+        coffee = live.json()["coffee"]
+        assert [line["stage"] for line in coffee] == ["green", "count"]
+        assert coffee[0]["defect_rate"] == 0.75
+        assert coffee[1]["total"] == 4
+        assert coffee[1]["defect_rate"] == 0
+
+
 def test_worker_token_and_masking():
     with client() as api:
         denied = api.get("/api/internal/cameras", headers={"X-Internal-Token": "nope"})
         assert denied.status_code == 401
         allowed = api.get("/api/internal/cameras", headers={"X-Internal-Token": "test-internal"})
         assert allowed.status_code == 200
-        assert len(allowed.json()) == 4
+        assert len(allowed.json()) == 5
+        bean = next(item for item in allowed.json() if item["code"] == "CAM-BEAN-01")
+        assert {zone["zone_type"] for zone in bean["zones"]} == {"GREEN_COFFEE_LINE", "ROASTED_COFFEE_LINE", "COFFEE_COUNT_LINE"}
+        defect_rules = [rule for rule in bean["rules"] if rule["condition_type"] == "DEFECT_RATE"]
+        assert {rule["event_type"] for rule in defect_rules} == {"GREEN_COFFEE_DEFECT_RATE", "ROASTED_COFFEE_DEFECT_RATE"}
+        assert all(rule["extensions"]["max_defect_rate"] == 0.15 and rule["extensions"]["window"] == 8 for rule in defect_rules)
     assert mask_stream_url("rtsp://operator:s3cret@10.0.0.5/live") == "rtsp://operator:***@10.0.0.5/live"
     assert "s3cret" not in mask_stream_url("rtsp://operator:s3cret@10.0.0.5/live")
 

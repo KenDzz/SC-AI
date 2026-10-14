@@ -4,6 +4,8 @@ export const EVENT_LABELS: Record<string, string> = {
   UNIFORM_VIOLATION: "Incorrect uniform",
   MACHINE_DANGER_ZONE_INTRUSION: "Machine danger zone",
   PEDESTRIAN_IN_FORKLIFT_ZONE: "Pedestrian in forklift lane",
+  GREEN_COFFEE_DEFECT_RATE: "Green bean defect rate",
+  ROASTED_COFFEE_DEFECT_RATE: "Roasted bean defect rate",
 };
 
 export const ZONE_LABELS: Record<string, string> = {
@@ -12,6 +14,28 @@ export const ZONE_LABELS: Record<string, string> = {
   FORKLIFT_LANE: "Forklift lane",
   PRODUCTION_ZONE: "Production zone",
   PACKING_ZONE: "Packing zone",
+  GREEN_COFFEE_LINE: "Green coffee belt",
+  ROASTED_COFFEE_LINE: "Roasted coffee belt",
+  COFFEE_COUNT_LINE: "Coffee count belt",
+};
+
+export const BEAN_LABELS: Record<string, string> = {
+  good: "Good",
+  black: "Black",
+  broken: "Broken",
+  fade: "Fade",
+  sour: "Sour",
+  quaker: "Quaker",
+  burnt: "Burnt",
+  insect: "Insect",
+  mould: "Mould",
+  bean: "Bean",
+};
+
+export const COFFEE_STAGE_LABELS: Record<string, string> = {
+  green: "Green coffee",
+  roasted: "Roasted coffee",
+  count: "Count only",
 };
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -29,6 +53,7 @@ export const CONDITION_LABELS: Record<string, string> = {
   PERSON_INSIDE: "Person inside zone",
   HAIRNET_MISSING: "Hairnet missing",
   UNIFORM_INCORRECT: "Incorrect uniform",
+  DEFECT_RATE: "Defect rate on the belt",
 };
 
 export function eventLabel(value: string) {

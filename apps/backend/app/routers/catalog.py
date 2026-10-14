@@ -160,6 +160,7 @@ def camera_live(camera_id: str, db: Session = Depends(get_db), _: User = Depends
         "source_state": live.get("source_state"),
         "tracks": live.get("tracks") or [],
         "zones": live.get("zones") or [],
+        "coffee": live.get("coffee") or [],
     }
 
 
