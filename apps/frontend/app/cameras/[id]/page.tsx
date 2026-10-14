@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import Shell from "@/components/shell";
 import { Badge, ErrorText, GhostButton, PrimaryButton, statusTone } from "@/components/ui";
 import { api, Camera, getUser, imageUrl } from "@/lib/api";
-import { STATUS_LABELS } from "@/lib/labels";
+import { BEAN_LABELS, COFFEE_STAGE_LABELS, STATUS_LABELS } from "@/lib/labels";
 
 type Check = { text: string; state: "violation" | "ok" | "unknown" };
 
@@ -25,6 +25,18 @@ const ZONE_STATES: Record<string, { label: (zone: ZoneState) => string; tone: st
 
 const PAUSED_STATES = new Set(["VIEW_CHANGED", "OUT_OF_VIEW"]);
 
+type CoffeeLine = {
+  zone_id: string;
+  name: string;
+  stage: string;
+  total: number;
+  window_total: number;
+  defects: number;
+  defect_rate: number;
+  by_class: Record<string, number>;
+  in_frame: number;
+};
+
 type Live = {
   status: string;
   ai_mode?: string;
@@ -35,6 +47,7 @@ type Live = {
   source_state?: string;
   tracks: { track_id: string; class_name: string; confidence: number; hairnet?: string; uniform?: string; checks?: Check[] }[];
   zones?: ZoneState[];
+  coffee?: CoffeeLine[];
 };
 
 export default function CameraDetailPage() {
@@ -186,6 +199,25 @@ export default function CameraDetailPage() {
               Measured {live?.ai_fps ?? 0} FPS · target {camera?.ai_fps ?? "—"} · {Math.round(live?.inference_ms || 0)} ms · {live?.frames_processed ?? 0} frames · {live?.dropped_frames ?? 0} dropped
             </div>
           </section>
+          {live?.coffee?.length ? (
+            <section className="rounded-xl border border-line bg-white p-4">
+              <h2 className="text-sm font-semibold">Coffee on the belt</h2>
+              <div className="mt-3 space-y-3">
+                {live.coffee.map((line) => (
+                  <div key={line.zone_id} className="rounded-md bg-paper px-3 py-2 text-sm">
+                    <div className="font-medium">{line.name}</div>
+                    <div className="text-slate-500">{COFFEE_STAGE_LABELS[line.stage] || line.stage}</div>
+                    <div className="mt-1">{line.total} counted · {line.in_frame} in frame{line.stage === "count" ? "" : ` · ${Math.round((line.defect_rate || 0) * 100)}% defects in the last ${line.window_total}`}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {Object.entries(line.by_class || {}).map(([name, count]) => (
+                        <Badge key={name} value={`${BEAN_LABELS[name] || name} ${count}`} tone={name === "good" || name === "bean" ? "green" : "red"} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
           {live?.zones?.length ? (
             <section className="rounded-xl border border-line bg-white p-4">
               <h2 className="text-sm font-semibold">Zones</h2>

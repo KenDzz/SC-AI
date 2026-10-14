@@ -11,10 +11,16 @@ PRODUCTION = [[0.15, 0.22], [0.72, 0.20], [0.76, 0.82], [0.12, 0.84]]
 MACHINE = [[0.42, 0.28], [0.82, 0.26], [0.86, 0.78], [0.40, 0.80]]
 RESTRICTED = [[0.48, 0.12], [0.92, 0.10], [0.94, 0.62], [0.46, 0.66]]
 FORKLIFT = [[0.08, 0.58], [0.88, 0.56], [0.90, 0.96], [0.06, 0.98]]
+GREEN_BELT = [[0.08, 0.05], [0.92, 0.05], [0.92, 0.30], [0.08, 0.30]]
+ROAST_BELT = [[0.08, 0.36], [0.92, 0.36], [0.92, 0.62], [0.08, 0.62]]
+COUNT_BELT = [[0.08, 0.68], [0.92, 0.68], [0.92, 0.96], [0.08, 0.96]]
 
 
 def seed(db: Session) -> None:
-    if db.query(Factory).filter(Factory.code == "coffee-poc").first():
+    existing = db.query(Factory).filter(Factory.code == "coffee-poc").first()
+    if existing:
+        if _ensure_bean_line(db, existing):
+            db.commit()
         return
     settings = get_settings()
     factory = Factory(name="Coffee Factory POC", code="coffee-poc", timezone="Asia/Ho_Chi_Minh")
@@ -64,6 +70,7 @@ def seed(db: Session) -> None:
     db.flush()
     for model in (person, ppe, forklift):
         db.add(AIModelDeployment(model_id=model.id, factory_id=factory.id, status="ACTIVE", notes="POC deployment"))
+    _ensure_bean_line(db, factory)
 
     now = datetime.now(timezone.utc)
     samples = [
@@ -106,7 +113,39 @@ def seed(db: Session) -> None:
     db.commit()
 
 
-def _rule(factory, camera, zone, name, event_type, condition, duration_ms, severity) -> Rule:
+def _ensure_bean_line(db: Session, factory: Factory) -> bool:
+    """Add the three coffee belts to a factory that was seeded before this feature."""
+    if db.query(Camera).filter(Camera.code == "CAM-BEAN-01").first():
+        return False
+    camera = Camera(factory_id=factory.id, code="CAM-BEAN-01", name="Bean Line Camera 01", area="Bean grading", stream_type="FILE", stream_url="", enabled=True, ai_fps=25)
+    db.add(camera)
+    db.flush()
+    green = Zone(factory_id=factory.id, camera_id=camera.id, name="Green coffee belt", zone_type="GREEN_COFFEE_LINE", polygon=GREEN_BELT)
+    roasted = Zone(factory_id=factory.id, camera_id=camera.id, name="Roasted coffee belt", zone_type="ROASTED_COFFEE_LINE", polygon=ROAST_BELT)
+    counted = Zone(factory_id=factory.id, camera_id=camera.id, name="Coffee count belt", zone_type="COFFEE_COUNT_LINE", polygon=COUNT_BELT)
+    db.add_all([green, roasted, counted])
+    db.flush()
+    db.add_all(
+        [
+            _rule(factory, camera, green, "Green bean defect rate", "GREEN_COFFEE_DEFECT_RATE", "DEFECT_RATE", 2000, "HIGH", {"max_defect_rate": 0.15, "window": 8}),
+            _rule(factory, camera, roasted, "Roasted bean defect rate", "ROASTED_COFFEE_DEFECT_RATE", "DEFECT_RATE", 2000, "HIGH", {"max_defect_rate": 0.15, "window": 8}),
+        ]
+    )
+    if db.query(AIModel).filter(AIModel.name == "coffee-line", AIModel.version == "v0-demo").first() is None:
+        model = AIModel(
+            name="coffee-line",
+            version="v0-demo",
+            model_type="COFFEE_INSPECTOR",
+            status="DEMO",
+            description="Green defects (black, broken, fade, sour), roasted defects (quaker, burnt, insect, mould), and a count-only belt. DEMO moves scripted beans. REAL uses coffee.onnx or colour blobs.",
+        )
+        db.add(model)
+        db.flush()
+        db.add(AIModelDeployment(model_id=model.id, factory_id=factory.id, status="ACTIVE", notes="POC deployment"))
+    return True
+
+
+def _rule(factory, camera, zone, name, event_type, condition, duration_ms, severity, extensions: dict | None = None) -> Rule:
     return Rule(
         factory_id=factory.id,
         camera_id=camera.id,
@@ -119,5 +158,5 @@ def _rule(factory, camera, zone, name, event_type, condition, duration_ms, sever
         grace_ms=1000,
         severity=severity,
         enabled=True,
-        extensions={},
+        extensions=extensions or {},
     )

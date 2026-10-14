@@ -55,6 +55,7 @@ def list_cameras(db: Session = Depends(get_db), _: None = Depends(require_worker
                         "grace_ms": rule.grace_ms,
                         "severity": rule.severity,
                         "enabled": rule.enabled,
+                        "extensions": rule.extensions or {},
                     }
                     for rule in rules
                 ],

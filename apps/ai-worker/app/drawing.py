@@ -7,6 +7,23 @@ ZONE_COLORS = {
     "FORKLIFT_LANE": (20, 140, 220),
     "PRODUCTION_ZONE": (160, 110, 20),
     "PACKING_ZONE": (80, 140, 40),
+    "GREEN_COFFEE_LINE": (50, 130, 40),
+    "ROASTED_COFFEE_LINE": (40, 80, 140),
+    "COFFEE_COUNT_LINE": (140, 120, 30),
+}
+
+COFFEE_ZONES = {"GREEN_COFFEE_LINE", "ROASTED_COFFEE_LINE", "COFFEE_COUNT_LINE"}
+BEAN_COLORS = {
+    "good": (50, 140, 40),
+    "bean": (150, 120, 30),
+    "black": (30, 30, 30),
+    "broken": (40, 80, 200),
+    "fade": (170, 170, 160),
+    "sour": (40, 190, 220),
+    "quaker": (150, 180, 200),
+    "burnt": (20, 20, 60),
+    "insect": (30, 50, 170),
+    "mould": (70, 150, 30),
 }
 
 CHECK_COLORS = {
@@ -44,9 +61,10 @@ def jpeg_bytes(image: np.ndarray, quality: int = 70) -> bytes:
     return encoded.tobytes()
 
 
-def annotate(image: np.ndarray, zones: list[dict], tracks: list[dict]) -> np.ndarray:
+def annotate(image: np.ndarray, zones: list[dict], tracks: list[dict], beans: list[dict] | None = None, coffee: list[dict] | None = None) -> np.ndarray:
     canvas = image.copy()
     height, width = canvas.shape[:2]
+    reports = {item.get("zone_id"): item for item in coffee or []}
     for zone in zones:
         name = zone.get("name") or zone.get("zone_type") or "Zone"
         points = zone.get("polygon") or []
@@ -59,8 +77,19 @@ def annotate(image: np.ndarray, zones: list[dict], tracks: list[dict]) -> np.nda
         cv2.fillPoly(overlay, [contour], color)
         cv2.addWeighted(overlay, 0.18, canvas, 0.82, 0, canvas)
         cv2.polylines(canvas, [contour], True, color, 2)
+        if zone.get("zone_type") in COFFEE_ZONES:
+            ys = [point[1] for point in points]
+            xs = [point[0] for point in points]
+            line_y = int(((min(ys) + max(ys)) / 2) * height)
+            cv2.line(canvas, (int(min(xs) * width), line_y), (int(max(xs) * width), line_y), color, 1, cv2.LINE_AA)
         label_at = contour[0]
         suffix = " (auto-aligned)" if zone.get("view_state") == "SHIFTED" else ""
+        report = reports.get(zone.get("id"))
+        if report:
+            if report.get("stage") == "count":
+                suffix += f" · {report.get('total', 0)} beans"
+            else:
+                suffix += f" · {report.get('total', 0)} beans, {round(float(report.get('defect_rate') or 0) * 100)}% defects"
         _label(canvas, name + suffix, int(label_at[0]), int(label_at[1]) - 6, color)
     for track in tracks:
         x1, y1, x2, y2 = [int(v) for v in track["bbox_xyxy"]]
@@ -72,6 +101,11 @@ def annotate(image: np.ndarray, zones: list[dict], tracks: list[dict]) -> np.nda
             lines = [f"Forklift {track['track_id']}"]
         for offset, text in enumerate(lines):
             _label(canvas, text, x1, y1 - 8 - (len(lines) - 1 - offset) * 18, color)
+    for bean in beans or []:
+        x1, y1, x2, y2 = [int(v) for v in bean["bbox_xyxy"]]
+        color = BEAN_COLORS.get(bean.get("class_name"), (80, 80, 80))
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+        _label(canvas, str(bean.get("class_name") or "bean"), x1, y1 - 6, color)
     return canvas
 
 

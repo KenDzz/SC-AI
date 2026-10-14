@@ -10,6 +10,15 @@ node_modules/
 .DS_Store
 sample-data/videos/*.mp4
 models/*.onnx
+.venv-yolo/
+runs/
+weights/
+/yolov8n.pt
+data/coffee-yolo/labels/**/*.cache
+data/coffee-yolo/_sources/
+data/coffee-yolo/images/**/*.jpg
+data/coffee-yolo/images/**/*.png
+data/coffee-yolo/labels/**/*.txt
 *.tsbuildinfo
 .tmp_pricing/
 .artifact_xlsx/

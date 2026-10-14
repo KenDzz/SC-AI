@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from app.alignment import ViewAligner, ZoneView
 from app.api_client import ApiClient
+from app.coffee import COFFEE_EVENTS, COFFEE_ZONES, BlobCoffeeDetector, CoffeeMonitor, DemoCoffeeDetector, build_coffee_detector
 from app.config import Settings
 from app.detectors import HogPersonDetector, UnknownPPEClassifier, build_detectors
 from app.drawing import annotate, jpeg_bytes
@@ -122,6 +123,10 @@ class CameraLoop:
         self.last_raw_preview = 0.0
         self.ppe_votes: dict[str, deque] = {}
         self.aligner = ViewAligner(self.store.get_bytes)
+        self.coffee_monitor = CoffeeMonitor()
+        self.coffee_detector = self._load_coffee()
+        self.coffee_beans: list[dict] = []
+        self.coffee_reports: list[dict] = []
         self.config: dict | None = None
         self.config_at = float("-inf")
         self.last_heartbeat_at = float("-inf")
@@ -134,6 +139,15 @@ class CameraLoop:
         except Exception:
             log.exception("model adapter failed; person detection uses HOG and PPE stays UNKNOWN")
             return HogPersonDetector(), UnknownPPEClassifier(), "person-detector", "hog-v1", "ppe-classifier", "unloaded"
+
+    def _load_coffee(self):
+        try:
+            return build_coffee_detector(self.settings.ai_mode, self.settings.model_path, self.settings.ai_device, self.settings.ai_threads)
+        except Exception:
+            log.exception("coffee model adapter failed; colour blobs are used instead")
+            if self.settings.ai_mode.upper() == "DEMO":
+                return DemoCoffeeDetector()
+            return BlobCoffeeDetector()
 
     def close(self) -> None:
         self.source.close()
@@ -213,6 +227,7 @@ class CameraLoop:
         detections = self.detector.detect(frame, camera.get("zones") or [], now, hold)
         tracks = self.tracker.update(detections)
         enriched = self._enrich(frame, camera, detections, tracks)
+        self.coffee_beans, self.coffee_reports, coffee_actions = self._inspect_coffee(camera, frame, now, hold)
         latency = time.perf_counter() - infer_started
         inference_latency.labels(camera_id=camera["id"]).observe(latency)
         frames_processed.labels(camera_id=camera["id"]).inc()
@@ -220,10 +235,16 @@ class CameraLoop:
         self.frames += 1
         self.frame_times.append(now)
         self._apply_rules(camera, frame, enriched, now)
+        self._apply_coffee(camera, frame, coffee_actions)
         camera_up.labels(camera_id=camera["id"]).set(1)
         achieved = self._achieved_fps()
         camera_fps.labels(camera_id=camera["id"]).set(achieved)
-        self._maybe_store_preview(camera["id"], frame, lambda: annotate(frame, camera.get("zones") or [], enriched), fps_setting)
+        self._maybe_store_preview(
+            camera["id"],
+            frame,
+            lambda: annotate(frame, camera.get("zones") or [], enriched, self.coffee_beans, self.coffee_reports),
+            fps_setting,
+        )
         self._heartbeat(camera, "AI_PROCESSING", enriched, latency * 1000.0, achieved, source_state)
 
     def _enrich(self, frame, camera: dict, detections: list[dict], tracks: list[dict]) -> list[dict]:
@@ -310,7 +331,12 @@ class CameraLoop:
         annotated = None
         for action in actions:
             if action.kind == "open":
-                self._open(camera, frame, action, annotated_frame=(annotated if annotated is not None else annotate(frame, camera.get("zones") or [], tracks)))
+                self._open(
+                    camera,
+                    frame,
+                    action,
+                    annotated_frame=(annotated if annotated is not None else annotate(frame, camera.get("zones") or [], tracks, self.coffee_beans, self.coffee_reports)),
+                )
             elif action.kind == "close" and action.incident_id:
                 try:
                     self.api.close_incident(action.incident_id, iso(action.ended_at or now))
@@ -318,7 +344,28 @@ class CameraLoop:
                 except Exception:
                     log.exception("incident close failed", extra={"camera_id": camera["id"], "incident_id": action.incident_id, "rule_id": action.rule_id, "track_id": action.track_id})
 
-    def _open(self, camera: dict, frame, action, annotated_frame) -> None:
+    def _inspect_coffee(self, camera: dict, frame, now: float, hold: bool):
+        zones = camera.get("zones") or []
+        if not any(zone.get("zone_type") in COFFEE_ZONES and zone.get("polygon") for zone in zones):
+            return [], [], []
+        raw = self.coffee_detector.detect(frame, zones, now, hold)
+        return self.coffee_monitor.step(raw, zones, camera.get("rules") or [], now)
+
+    def _apply_coffee(self, camera: dict, frame, actions: list) -> None:
+        if not actions:
+            return
+        annotated = annotate(frame, camera.get("zones") or [], [], self.coffee_beans, self.coffee_reports)
+        for action in actions:
+            if action.kind == "open":
+                self._open(camera, frame, action, annotated_frame=annotated, model=(self.coffee_detector.name, self.coffee_detector.version))
+            elif action.kind == "close" and action.incident_id:
+                try:
+                    self.api.close_incident(action.incident_id, iso(action.ended_at or time.time()))
+                    event(log, "incident closed", camera_id=camera["id"], track_id=action.track_id, rule_id=action.rule_id, incident_id=action.incident_id)
+                except Exception:
+                    log.exception("incident close failed", extra={"camera_id": camera["id"], "incident_id": action.incident_id, "rule_id": action.rule_id, "track_id": action.track_id})
+
+    def _open(self, camera: dict, frame, action, annotated_frame, model: tuple[str, str] | None = None) -> None:
         use_ppe = action.event_type in PPE_EVENTS
         snapshot = jpeg_bytes(annotated_frame)
         crop = crop_of(frame, [action.bbox[0] * frame.shape[1], action.bbox[1] * frame.shape[0], action.bbox[2] * frame.shape[1], action.bbox[3] * frame.shape[0]])
@@ -332,8 +379,8 @@ class CameraLoop:
             "track_id": action.track_id,
             "confidence": round(float(action.confidence), 4),
             "started_at": iso(action.started_at),
-            "model_name": self.ppe_name if use_ppe else self.person_name,
-            "model_version": self.ppe_version if use_ppe else self.person_version,
+            "model_name": model[0] if model else (self.ppe_name if use_ppe else self.person_name),
+            "model_version": model[1] if model else (self.ppe_version if use_ppe else self.person_version),
             "ai_mode": self.settings.ai_mode.upper(),
             "snapshot_base64": base64.b64encode(snapshot).decode("ascii"),
             "crop_base64": base64.b64encode(jpeg_bytes(crop, 80)).decode("ascii") if crop is not None and crop.size else None,
@@ -345,9 +392,15 @@ class CameraLoop:
             return
         reason = body.get("reason")
         if reason == "cooldown":
-            self.engine.force_cooldown(action.rule_id, action.track_id, time.time() + 1.0)
+            if action.event_type in COFFEE_EVENTS:
+                self.coffee_monitor.force_cooldown(action.rule_id, time.time() + 1.0)
+            else:
+                self.engine.force_cooldown(action.rule_id, action.track_id, time.time() + 1.0)
             return
-        self.engine.attach_incident(action.rule_id, action.track_id, body["id"])
+        if action.event_type in COFFEE_EVENTS:
+            self.coffee_monitor.attach(action.rule_id, body["id"])
+        else:
+            self.engine.attach_incident(action.rule_id, action.track_id, body["id"])
         if reason == "created":
             incidents_created.labels(camera_id=camera["id"]).inc()
             event(
@@ -404,6 +457,20 @@ class CameraLoop:
                 {"id": zone["id"], "name": zone.get("name"), "state": zone["view_state"], "shift_pct": zone.get("shift_pct", 0.0)}
                 for zone in camera.get("zones") or []
                 if "view_state" in zone
+            ],
+            "coffee": [
+                {
+                    "zone_id": item["zone_id"],
+                    "name": item["name"],
+                    "stage": item["stage"],
+                    "total": item["total"],
+                    "window_total": item["window_total"],
+                    "defects": item["defects"],
+                    "defect_rate": round(float(item["defect_rate"]), 3),
+                    "by_class": item["by_class"],
+                    "in_frame": item["in_frame"],
+                }
+                for item in self.coffee_reports
             ],
         }
         try:

@@ -1,0 +1,19 @@
+# Nine classes, same ids the worker uses.
+# Images and labels live in data/coffee-yolo. One txt per image, YOLO rows:
+# class_id cx cy width height, all normalised 0..1.
+# python tools/coffee_yolo/prepare_public_beans.py
+# Fade and sour stay in the head. Those two names have no matching public class.
+# Relative to the shell's working directory. Train from the repo root.
+path: data/coffee-yolo
+train: images/train
+val: images/val
+names:
+  0: good
+  1: black
+  2: broken
+  3: fade
+  4: sour
+  5: quaker
+  6: burnt
+  7: insect
+  8: mould

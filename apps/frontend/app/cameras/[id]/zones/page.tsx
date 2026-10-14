@@ -189,6 +189,9 @@ export default function ZonesPage() {
                   {TYPES.map((type) => <option key={type} value={type}>{ZONE_LABELS[type]}</option>)}
                 </select>
               </label>
+              {zoneType === "GREEN_COFFEE_LINE" || zoneType === "ROASTED_COFFEE_LINE" || zoneType === "COFFEE_COUNT_LINE" ? (
+                <p className="text-xs text-slate-500">Draw the belt. Each bean is counted once when it crosses the horizontal middle, moving down the frame. Green and roasted belts also grade defects. The count belt only totals quantity.</p>
+              ) : null}
               <div className="text-xs text-slate-500">
                 {points.length} points. Click the corners in order around the area. Any number of corners works.
                 {editing ? " The dashed outline is the current shape. Its rules and past incidents stay linked." : ""}

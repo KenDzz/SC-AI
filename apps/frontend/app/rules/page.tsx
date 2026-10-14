@@ -12,6 +12,8 @@ const TEMPLATES = [
   { label: "Restricted area", event_type: "RESTRICTED_AREA_INTRUSION", condition_type: "PERSON_INSIDE", severity: "HIGH", min_duration_s: 1 },
   { label: "Machine danger zone", event_type: "MACHINE_DANGER_ZONE_INTRUSION", condition_type: "PERSON_INSIDE", severity: "CRITICAL", min_duration_s: 1 },
   { label: "Forklift lane", event_type: "PEDESTRIAN_IN_FORKLIFT_ZONE", condition_type: "PERSON_INSIDE", severity: "CRITICAL", min_duration_s: 1 },
+  { label: "Green bean defect rate", event_type: "GREEN_COFFEE_DEFECT_RATE", condition_type: "DEFECT_RATE", severity: "HIGH", min_duration_s: 2 },
+  { label: "Roasted bean defect rate", event_type: "ROASTED_COFFEE_DEFECT_RATE", condition_type: "DEFECT_RATE", severity: "HIGH", min_duration_s: 2 },
 ];
 
 export default function RulesPage() {
@@ -82,7 +84,12 @@ export default function RulesPage() {
             </label>
             <label className="text-sm">Minimum duration (seconds)<input type="number" min={0} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} /></label>
             <label className="text-sm">Cooldown (seconds)<input type="number" min={0} value={cooldown} onChange={(e) => setCooldown(Number(e.target.value))} /></label>
-            <p className="text-xs text-slate-500">{CONDITION_LABELS[chosen.condition_type]}. Unknown hairnet or uniform results do not raise an alert.</p>
+            <p className="text-xs text-slate-500">
+              {CONDITION_LABELS[chosen.condition_type]}.{" "}
+              {chosen.condition_type === "DEFECT_RATE"
+                ? "Opens when the recent share of defective beans stays above 15%."
+                : "Unknown hairnet or uniform results do not raise an alert."}
+            </p>
             <PrimaryButton type="submit">Save rule</PrimaryButton>
           </form>
         ) : null}
